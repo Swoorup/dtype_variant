@@ -48,6 +48,27 @@ impl DynChunk {
     }
 }
 
+#[derive(DType, Clone, Debug)]
+#[dtype(constraint = "DPrim", tokens = "self", matcher = "match_dyn_chunk_borrowed")]
+enum DynChunkBorrowed<'a> {
+    I32(&'a Vec<i32>),
+    F32(&'a Vec<f32>),
+}
+
+impl<'a> DynChunkBorrowed<'a> {
+    fn from_dynchunk(chunk: &'a DynChunk) -> Self {
+        match_enum!(chunk, DynChunk<Inner, Variant>(inner), DynChunkBorrowed<T<'a>, Dest<'a> > => {
+            Self::from(inner)
+        })
+    }
+
+    fn to_dynchunk(&self) -> DynChunk {
+        match_dyn_chunk_borrowed!(self, DynChunkBorrowed< T<'a>, Variant>(inner), DynChunk<Dest> => {
+            DynChunk::from((*inner).clone())
+        })
+    }
+}
+
 fn main() {
     // Create and add DynChunks
     let chunk1 = DynChunk::from(vec![1, 2, 3]);
@@ -68,5 +89,11 @@ fn main() {
     println!("Primitive type of chunk2: {:?}", primitive_type);
 
     let empty = DPrimType::F32.create_chunk();
-    println!("Primitive type of empty chunk: {:?}", empty.prim_type())
+    println!("Primitive type of empty chunk: {:?}", empty.prim_type());
+
+    let borrowed = DynChunkBorrowed::from_dynchunk(&empty);
+    println!(
+        "Primitive type of borrowed chunk: {:?}",
+        borrowed.to_dynchunk().prim_type()
+    );
 }
