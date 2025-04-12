@@ -8,6 +8,8 @@ use syn::{
     parse_macro_input, parse_quote,
 };
 
+use crate::dtype_variant_path;
+
 /// Parses the top-level `#[dtype(...)]` attribute applied to the enum.
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(dtype), supports(enum_any))] // Specify attribute name and support only enums
@@ -59,6 +61,8 @@ struct ParsedVariantInfo {
 }
 
 pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
+    let dtype_variant_path = dtype_variant_path();
+
     // Parse the input token stream into a syn::DeriveInput AST node.
     let derive_input = parse_macro_input!(input as DeriveInput);
 
@@ -120,8 +124,15 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
 
     // Generate the different code blocks using helper functions.
     let token_validation_code = generate_token_validation(&tokens_path, &parsed_variants);
-    let target_impls = generate_enum_variant_downcast(enum_name, generics, &parsed_variants, &tokens_path);
+    let target_impls = generate_enum_variant_downcast(
+        &dtype_variant_path,
+        enum_name,
+        generics,
+        &parsed_variants,
+        &tokens_path,
+    );
     let constraint_impls = generate_enum_variant_constraint(
+        &dtype_variant_path,
         enum_name,
         generics,
         &parsed_variants,
@@ -135,7 +146,7 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         container_ident_opt.is_some(),
         &tokens_path,
     );
-    let downcast_methods = generate_downcast_methods(enum_name, generics, &parsed_variants);
+    let downcast_methods = generate_downcast_methods(&dtype_variant_path, enum_name, generics, &parsed_variants);
     let matcher_method = generate_matcher_method(
         enum_name,
         generics,
@@ -149,7 +160,7 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         // Compile-time validation of token existence.
         #token_validation_code
 
-        // Implementations of EnumVariantTarget trait.
+        // Implementations of #dtype_variant_path::EnumVariantTarget trait.
         #target_impls
 
         // Implementations of the user-specified constraint trait.
@@ -332,8 +343,9 @@ fn generate_token_validation(tokens_path: &Path, parsed_variants: &[ParsedVarian
     }
 }
 
-/// Generates `impl EnumVariantTarget<...>` blocks.
+/// Generates `impl #dtype_variant_path::EnumVariantTarget<...>` blocks.
 fn generate_enum_variant_downcast(
+    dtype_variant_path: &Path,
     enum_name: &Ident,
     generics: &Generics,
     parsed_variants: &[ParsedVariantInfo],
@@ -357,8 +369,8 @@ fn generate_enum_variant_downcast(
 
         // Use the full path to the token
         Some(quote! {
-            // Implement the new EnumVariantDowncast trait
-            impl #impl_generics EnumVariantDowncast<#tokens_path::#token_ident>
+            // Implement the new #dtype_variant_path::EnumVariantDowncast trait
+            impl #impl_generics #dtype_variant_path::EnumVariantDowncast<#tokens_path::#token_ident>
                 for #enum_name #ty_generics #where_clause_with_bounds
             {
                 type Target = #full_field_type;
@@ -389,8 +401,9 @@ fn generate_enum_variant_downcast(
 
     quote! { #(#downcast_impls)* }
 }
-/// Generates `impl EnumVariantConstraint<...>` blocks if `constraint` is specified.
+/// Generates `impl #dtype_variant_path::EnumVariantConstraint<...>` blocks if `constraint` is specified.
 fn generate_enum_variant_constraint(
+    dtype_variant_path: &Path,
     enum_name: &Ident,
     generics: &Generics,
     parsed_variants: &[ParsedVariantInfo],
@@ -423,9 +436,9 @@ fn generate_enum_variant_constraint(
             .push(parse_quote!(#inner_type: #constraint_path));
 
         Some(quote! {
-            // Implement EnumVariantConstraint for the enum with the token type
+            // Implement #dtype_variant_path::EnumVariantConstraint for the enum with the token type
             // Use the full path to the token
-            impl #impl_generics EnumVariantConstraint<#tokens_path::#token_ident>
+            impl #impl_generics #dtype_variant_path::EnumVariantConstraint<#tokens_path::#token_ident>
                 for #enum_name #ty_generics #where_clause_with_bounds
             {
                 // Set the Constraint associated type to the inner type
@@ -500,8 +513,9 @@ fn generate_from_impls(
     }
 }
 
-/// Generates `downcast_ref`, `downcast_mut`, `downcast` methods using the EnumVariantDowncast trait.
+/// Generates `downcast_ref`, `downcast_mut`, `downcast` methods using the #dtype_variant_path::EnumVariantDowncast trait.
 fn generate_downcast_methods(
+    dtype_variant_path: &Path,
     enum_name: &Ident,
     generics: &Generics,
     _parsed_variants: &[ParsedVariantInfo],
@@ -512,31 +526,31 @@ fn generate_downcast_methods(
         impl<#impl_generics> #enum_name #ty_generics #where_clause {
             /// Attempts to downcast to a shared reference to the target type if the enum holds the
             /// variant corresponding to token type `Token`.
-            pub fn downcast_ref<Token>(&self) -> Option<&<Self as EnumVariantDowncast<Token>>::Target>
+            pub fn downcast_ref<Token>(&self) -> Option<&<Self as #dtype_variant_path::EnumVariantDowncast<Token>>::Target>
             where
-                Self: EnumVariantDowncast<Token>
+                Self: #dtype_variant_path::EnumVariantDowncast<Token>
             {
-                <Self as EnumVariantDowncast<Token>>::downcast_ref(self)
+                <Self as #dtype_variant_path::EnumVariantDowncast<Token>>::downcast_ref(self)
             }
 
             /// Attempts to downcast to a mutable reference to the target type if the enum holds the
             /// variant corresponding to token type `Token`.
-            pub fn downcast_mut<Token>(&mut self) -> Option<&mut <Self as EnumVariantDowncast<Token>>::Target>
+            pub fn downcast_mut<Token>(&mut self) -> Option<&mut <Self as #dtype_variant_path::EnumVariantDowncast<Token>>::Target>
             where
-                Self: EnumVariantDowncast<Token>
+                Self: #dtype_variant_path::EnumVariantDowncast<Token>
             {
-                <Self as EnumVariantDowncast<Token>>::downcast_mut(self)
+                <Self as #dtype_variant_path::EnumVariantDowncast<Token>>::downcast_mut(self)
             }
 
             /// Attempts to downcast to an owned target type if the enum holds the
             /// variant corresponding to token type `Token`, consuming the enum.
             /// Returns `Some(Target)` on success, or `None` if the enum doesn't hold the expected variant.
-            pub fn downcast<Token>(self) -> Option<<Self as EnumVariantDowncast<Token>>::Target>
+            pub fn downcast<Token>(self) -> Option<<Self as #dtype_variant_path::EnumVariantDowncast<Token>>::Target>
             where
-                Self: EnumVariantDowncast<Token>,
+                Self: #dtype_variant_path::EnumVariantDowncast<Token>,
                 Self: Sized // Required for moving self
             {
-                <Self as EnumVariantDowncast<Token>>::downcast(self)
+                <Self as #dtype_variant_path::EnumVariantDowncast<Token>>::downcast(self)
             }
         }
     }
@@ -565,8 +579,14 @@ fn generate_matcher_method(
         .map(|seg| seg.ident == "crate")
         .unwrap_or(false);
 
+    enum ArmVariantVar {
+        None,
+        InnerOnly,
+        InnerAndVariant,
+    }
+
     // Generate match arms for the macro
-    let generate_arms = |include_variant: bool| {
+    let generate_arms = |arm: ArmVariantVar| {
         parsed_variants.iter().map(move |v| {
             let variant_ident = &v.variant_ident;
             let token_ident = &v.token_ident;
@@ -597,7 +617,7 @@ fn generate_matcher_method(
             };
 
             // Optional variant instantiation
-            let variant_instantiation = if include_variant {
+            let variant_instantiation = if matches!(arm, ArmVariantVar::InnerAndVariant) {
                 quote! {
                     #[allow(unused)]
                     let $variant = #token_type_path;
@@ -606,46 +626,69 @@ fn generate_matcher_method(
                 quote! {}
             };
 
-            if v.is_unit {
-                quote! {
-                    #enum_name::#variant_ident => {
-                        #[allow(unused)]
-                        let $inner = ();
-                        #type_declarations
-                        #variant_instantiation
-                        #[allow(unused_braces)]
-                        $body
+            let (pattern, inner_decl) = match arm {
+                ArmVariantVar::None => {
+                    let pattern = if v.is_unit {
+                        quote! { #enum_name::#variant_ident }
+                    } else {
+                        quote! { #enum_name::#variant_ident(_) }
+                    };
+
+                    let inner_decl = quote! {};
+                    (pattern, inner_decl)
+                }
+                _ => {
+                    if v.is_unit {
+                        let pattern = quote! { #enum_name::#variant_ident };
+                        let inner_decl = quote! {
+                            #[allow(unused)]
+                            let $inner = #inner_type;
+                        };
+
+                        (pattern, inner_decl)
+                    } else {
+                        let pattern = quote! { #enum_name::#variant_ident($inner) };
+                        let inner_decl = quote! {};
+
+                        (pattern, inner_decl)
                     }
                 }
-            } else {
-                quote! {
-                    #enum_name::#variant_ident($inner) => {
-                        #type_declarations
-                        #variant_instantiation
-                        #[allow(unused_braces)]
-                        $body
-                    }
+            };
+
+            quote! {
+                #pattern => {
+                    #inner_decl
+                    #type_declarations
+                    #variant_instantiation
+                    #[allow(unused_braces)]
+                    $body
                 }
             }
         })
     };
 
-    let tuple_variant_arms = generate_arms(false);
-    let tuple_variant_arms_with_variant = generate_arms(true);
+    let tuple_variant_arms = generate_arms(ArmVariantVar::None);
+    let tuple_variant_arms_with_inner = generate_arms(ArmVariantVar::InnerOnly);
+    let tuple_variant_arms_with_both = generate_arms(ArmVariantVar::InnerAndVariant);
 
     // Generate the macro definition
     quote! {
         #[doc(hidden)]
         #[macro_export]
         macro_rules! #internal_matcher_name {
-            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident>($inner:ident) => $body:block) => {
+            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident> => $body:block) => {
                 match $value {
                     #(#tuple_variant_arms)*
                 }
             };
+            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident>($inner:ident) => $body:block) => {
+                match $value {
+                    #(#tuple_variant_arms_with_inner)*
+                }
+            };
             ($value:expr, $enum_:ident<$generic:ident, $token_type:ident>($inner:ident, $variant:ident) => $body:block) => {
                 match $value {
-                    #(#tuple_variant_arms_with_variant)*
+                    #(#tuple_variant_arms_with_both)*
                 }
             };
         }

@@ -1,4 +1,4 @@
-use dtype_variant::*;
+use dtype_variant::{DType, build_dtype_tokens};
 
 build_dtype_tokens!([I32, F32]);
 
