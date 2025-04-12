@@ -4,6 +4,14 @@ use syn::{Ident, Token, parse_macro_input, punctuated::Punctuated};
 
 mod derive;
 
+pub(crate) fn dtype_variant_path() -> syn::Path {
+    let found_crate = proc_macro_crate::crate_name("dtype_variant").expect("dtype_variant is present in `Cargo.toml`");
+    match found_crate {
+        proc_macro_crate::FoundCrate::Itself => format_ident!("crate").into(),
+        proc_macro_crate::FoundCrate::Name(name) => syn::parse(name.parse().unwrap()).unwrap(),
+    }
+}
+
 #[proc_macro_derive(DType, attributes(dtype))]
 pub fn dtype_derive(input: TokenStream) -> TokenStream {
     derive::dtype_derive_impl(input)
