@@ -13,6 +13,14 @@ enum DPrimType {
     F32,
 }
 
+impl DPrimType {
+    pub fn create_chunk(&self) -> DynChunk {
+        match_dprimtype!(self, DPrimType<Variant>, DynChunk<T> => {
+            T::new().into()
+        })
+    }
+}
+
 #[derive(DType, Clone, Debug)]
 #[dtype(constraint = "DPrim", tokens = "self", container = "Vec", matcher = "match_enum")]
 enum DynChunk {
@@ -26,8 +34,8 @@ impl DynChunk {
     }
 
     pub fn prim_type(&self) -> DPrimType {
-        match_enum!(self, DynChunk<T, V>(_inner, variant) => {
-            variant.into()
+        match_enum!(self, DynChunk<V> => {
+            DPrimType::from_variant::<V>()
         })
     }
 
@@ -58,4 +66,7 @@ fn main() {
 
     let primitive_type = chunk2.prim_type();
     println!("Primitive type of chunk2: {:?}", primitive_type);
+
+    let empty = DPrimType::F32.create_chunk();
+    println!("Primitive type of empty chunk: {:?}", empty.prim_type())
 }
