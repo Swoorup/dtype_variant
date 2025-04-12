@@ -28,9 +28,18 @@ mod tests {
 
     build_dtype_tokens!([U16, U32, U64]);
 
-    #[derive(Clone, Debug, DType)]
+    #[derive(Clone, Debug, Default, DType)]
+    #[dtype(matcher = "match_my_enum_variant", tokens = "self", constraint = "Constraint")]
+    pub enum MyEnumVariant {
+        U16,
+        U32,
+        #[default]
+        U64,
+    }
+
+    #[derive(Clone, Debug, DType, PartialEq, Eq)]
     #[dtype(
-        matcher = "test_match_enum",
+        matcher = "match_my_enum",
         tokens = "self",
         constraint = "Constraint",
         container = "Vec"
@@ -40,30 +49,37 @@ mod tests {
         U32(Vec<u32>),
         U64(Vec<u64>),
     }
-    #[derive(Clone, Debug, Default, DType)]
-    #[dtype(matcher = "test_match_enum_variant", tokens = "self", constraint = "Constraint")]
-    pub enum MyEnumVariant {
-        U16,
-        U32,
-        #[default]
-        U64,
+
+    impl MyEnum {
+        fn from_default_variant(kind: MyEnumVariant) -> Self {
+            match_my_enum_variant!(kind, MyEnumVariant<Variant>, MyEnum<Container, Constraint> => {
+                vec![Constraint::default()].into()
+            })
+        }
     }
 
     #[test]
     fn test_simple_enum() {
         let a = MyEnumVariant::U16;
         let _b = MyEnumVariant::U32;
-        test_match_enum_variant!(a, MyEnumVariant<VariantToken> => {
+        match_my_enum_variant!(a, MyEnumVariant<VariantToken> => {
         });
     }
 
     #[test]
     fn test_end_to_end() {
         let x = MyEnum::from(vec![1_u16, 1, 2, 3, 5]);
-        let bit_size = test_match_enum!(&x, MyEnum<T, VariantToken>(inner) => { inner.len() * T::BITS as usize });
+        let bit_size = match_my_enum!(&x, MyEnum<T, VariantToken>(inner) => { inner.len() * T::BITS as usize });
         assert_eq!(bit_size, 80);
         let x = x.downcast::<U16Variant>().unwrap();
         assert_eq!(x[0], 1);
+    }
+
+    #[test]
+    fn test_constraint() {
+        let x = MyEnumVariant::U16;
+        let my_enum = MyEnum::from_default_variant(x);
+        assert_eq!(my_enum, MyEnum::U16(vec![0]));
     }
 
     #[test]
