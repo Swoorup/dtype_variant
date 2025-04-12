@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use darling::FromDeriveInput;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -472,7 +474,7 @@ fn generate_from_impls(
         if has_container {
             // When container is used, generate From<FullFieldType> -> EnumName
             Some(quote! {
-                impl<#impl_generics> From<#full_field_type> for #enum_name #ty_generics #where_clause {
+                impl #impl_generics From<#full_field_type> for #enum_name #ty_generics #where_clause {
                     fn from(value: #full_field_type) -> Self {
                         Self::#variant_ident(value)
                     }
@@ -482,7 +484,7 @@ fn generate_from_impls(
             // When no container is used, full_field_type and inner_type are the same
             // So only generate one implementation
             Some(quote! {
-                impl<#impl_generics> From<#inner_type> for #enum_name #ty_generics #where_clause {
+                impl #impl_generics From<#inner_type> for #enum_name #ty_generics #where_clause {
                     fn from(value: #inner_type) -> Self {
                         Self::#variant_ident(value)
                     }
@@ -547,7 +549,7 @@ fn generate_downcast_methods(
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     quote! {
-        impl<#impl_generics> #enum_name #ty_generics #where_clause {
+        impl #impl_generics #enum_name #ty_generics #where_clause {
             /// Attempts to downcast to a shared reference to the target type if the enum holds the
             /// variant corresponding to token type `Token`.
             pub fn downcast_ref<Token>(&self) -> Option<&<Self as #dtype_variant_path::EnumVariantDowncast<Token>>::Target>
@@ -615,7 +617,11 @@ fn generate_matcher_method(
         .unwrap_or(false);
 
     // Generate match arms for the macro
-    let generate_arms = |include_inner: bool, include_dest: bool, dest_constraint: bool| {
+    let generate_arms = |include_inner: bool,
+                         src_type_generic: bool,
+                         include_dest: bool,
+                         dest_type_generic: bool,
+                         dest_constraint: bool| {
         parsed_variants.iter().map(move |v| {
             let variant_ident = &v.variant_ident;
             let token_ident = &v.token_ident;
@@ -659,9 +665,13 @@ fn generate_matcher_method(
                     type $token_type = #token_type_path;
                 }
             } else {
+                let src_type_generic = src_type_generic.then_some(quote!{
+                    < $src_type_generic >
+                }).unwrap_or_default();
+
                 let inner = include_inner.then_some(quote!{
                     #[allow(unused)]
-                    type $generic = #inner_type;
+                    type $src_type #src_type_generic = #inner_type;
                 }).unwrap_or_default();
 
                 quote! {
@@ -686,18 +696,21 @@ fn generate_matcher_method(
                     })
                     .unwrap_or_default(),
             };
+            let dest_type_generic = dest_type_generic.then_some(quote!{
+                < $dest_type_generic >
+            }).unwrap_or_default();
 
-            let dest_generic = include_dest
+            let dest_type = include_dest
                 .then_some(quote! {
                     #[allow(unused)]
-                    type $dest_generic = <$dest_enum as #dtype_variant_path::EnumVariantDowncast<#token_type_path>>::Target;
+                    type $dest_type #dest_type_generic = <$dest_enum #dest_type_generic as #dtype_variant_path::EnumVariantDowncast<#token_type_path>>::Target;
                 })
                 .unwrap_or_default();
 
             let dest_constraint = dest_constraint
                 .then_some(quote! {
                     #[allow(unused)]
-                    type $dest_constraint = <$dest_enum as #dtype_variant_path::EnumVariantConstraint<#token_type_path>>::Constraint;
+                    type $dest_constraint #dest_type_generic = <$dest_enum #dest_type_generic as #dtype_variant_path::EnumVariantConstraint<#token_type_path>>::Constraint;
                 })
                 .unwrap_or_default();
 
@@ -705,7 +718,7 @@ fn generate_matcher_method(
                 #pattern => {
                     #inner_decl
                     #type_declarations
-                    #dest_generic
+                    #dest_type
                     #dest_constraint
 
                     #[allow(unused_braces)]
@@ -715,11 +728,25 @@ fn generate_matcher_method(
         })
     };
 
-    let generate_macro_arms = |include_inner: bool, include_dest: bool, dest_constraint: bool| {
-        let tuple_variant_arms = generate_arms(include_inner, include_dest, dest_constraint);
+    let generate_macro_arms = |include_inner: bool,
+                               src_type_generic: bool,
+                               include_dest: bool,
+                               dest_type_generic: bool,
+                               dest_constraint: bool| {
+        let tuple_variant_arms = generate_arms(
+            include_inner,
+            src_type_generic,
+            include_dest,
+            dest_type_generic,
+            dest_constraint,
+        );
         let source_enum_type = if include_inner {
+            let src_type_generic = src_type_generic
+                .then_some(quote!(<$src_type_generic:tt>))
+                .unwrap_or_default();
+
             quote! {
-                $enum_:ident<$generic:ident, $token_type:ident>
+                $enum_:ident<$src_type:ident #src_type_generic, $token_type:ident>
             }
         } else {
             quote! {
@@ -728,13 +755,19 @@ fn generate_matcher_method(
         };
 
         let macro_arm_inner = include_inner.then_some(quote!(($inner:ident))).unwrap_or_default();
+        let (dest_type_generic, dest_constraint_generic) = dest_type_generic
+            .then_some((
+                quote!(<$dest_type_generic:tt>),
+                quote!(<$dest_constraint_generic:tt>),
+            ))
+            .unwrap_or_default();
 
         let dest_enum_type = match (include_dest, dest_constraint) {
             (true, true) => quote! {
-                , $dest_enum:ident<$dest_generic:ident, $dest_constraint:ident>
+                , $dest_enum:ident<$dest_type:ident #dest_type_generic, $dest_constraint:ident #dest_constraint_generic >
             },
             (true, false) => quote! {
-                , $dest_enum:ident<$dest_generic:ident>
+                , $dest_enum:ident<$dest_type:ident #dest_type_generic>
             },
             (false, _) => quote!(),
         };
@@ -749,9 +782,11 @@ fn generate_matcher_method(
     };
 
     if all_unit_variants {
-        let no_dest = generate_macro_arms(false, false, false);
-        let dest_no_constraint = generate_macro_arms(false, true, false);
-        let dest_constraint = generate_macro_arms(false, true, true);
+        let no_dest = generate_macro_arms(false, false, false, false, false);
+        let dest_no_generic_no_constraint = generate_macro_arms(false, false, true, false, false);
+        let dest_generic_no_constraint = generate_macro_arms(false, false, true, true, false);
+        let dest_no_generic_constraint = generate_macro_arms(false, false, true, false, true);
+        let dest_generic_constraint = generate_macro_arms(false, false, true, true, true);
 
         // Generate the macro definition
         quote! {
@@ -759,30 +794,54 @@ fn generate_matcher_method(
                 #[macro_export]
                 macro_rules! #internal_matcher_name {
                     #no_dest
-                    #dest_no_constraint
-                    #dest_constraint
+                    #dest_no_generic_no_constraint
+                    #dest_generic_no_constraint
+                    #dest_no_generic_constraint
+                    #dest_generic_constraint
                 }
                 pub use #internal_matcher_name as #matcher_name;
         }
     } else {
-        let no_inner_no_dest = generate_macro_arms(false, false, false);
-        let inner_no_dest = generate_macro_arms(true, false, false);
-        let inner_dest_no_constraint = generate_macro_arms(true, true, false);
-        let inner_dest_constraint = generate_macro_arms(true, true, true);
-        let no_inner_dest_no_constraint = generate_macro_arms(false, true, false);
-        let no_inner_dest_constraint = generate_macro_arms(false, true, true);
+        let no_src__no_dest = generate_macro_arms(false, false, false, false, false);
+        let src_no_generic__no_dest = generate_macro_arms(true, false, false, false, false);
+        let src_generic__no_dest = generate_macro_arms(true, true, false, false, false);
+
+        let src_no_generic__dest_no_generic_no_constraint = generate_macro_arms(true, false, true, false, false);
+        let src_no_generic__dest_generic_no_constraint = generate_macro_arms(true, false, true, true, false);
+        let src_generic__dest_no_generic_no_constraint = generate_macro_arms(true, true, true, false, false);
+        let src_generic__dest_generic_no_constraint = generate_macro_arms(true, true, true, true, false);
+        let src_no_generic__dest_no_generic_constraint = generate_macro_arms(true, false, true, false, true);
+        let src_no_generic__dest_generic_constraint = generate_macro_arms(true, false, true, true, true);
+        let src_generic__dest_no_generic_constraint = generate_macro_arms(true, true, true, false, true);
+        let src_generic__dest_generic_constraint = generate_macro_arms(true, true, true, true, true);
+
+        let no_src__dest_no_generic_no_constraint = generate_macro_arms(false, false, true, false, false);
+        let no_src__dest_generic_no_constraint = generate_macro_arms(false, false, true, true, false);
+        let no_src__dest_no_generic_constraint = generate_macro_arms(false, false, true, false, true);
+        let no_src__dest_generic_constraint = generate_macro_arms(false, false, true, true, true);
 
         // Generate the macro definition
         quote! {
                 #[doc(hidden)]
                 #[macro_export]
                 macro_rules! #internal_matcher_name {
-                    #no_inner_no_dest
-                    #inner_no_dest
-                    #inner_dest_no_constraint
-                    #inner_dest_constraint
-                    #no_inner_dest_no_constraint
-                    #no_inner_dest_constraint
+                    #no_src__no_dest
+                    #src_no_generic__no_dest
+                    #src_generic__no_dest
+
+                    #src_no_generic__dest_no_generic_no_constraint
+                    #src_no_generic__dest_generic_no_constraint
+                    #src_generic__dest_no_generic_no_constraint
+                    #src_generic__dest_generic_no_constraint
+                    #src_no_generic__dest_no_generic_constraint
+                    #src_no_generic__dest_generic_constraint
+                    #src_generic__dest_no_generic_constraint
+                    #src_generic__dest_generic_constraint
+
+                    #no_src__dest_no_generic_no_constraint
+                    #no_src__dest_generic_no_constraint
+                    #no_src__dest_no_generic_constraint
+                    #no_src__dest_generic_constraint
                 }
                 pub use #internal_matcher_name as #matcher_name;
         }
