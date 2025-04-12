@@ -34,7 +34,7 @@ impl DynChunk {
     }
 
     pub fn prim_type(&self) -> DPrimType {
-        match_enum!(self, DynChunk<T, V>(_inner) => {
+        match_enum!(self, DynChunk<V> => {
             DPrimType::from_variant::<V>()
         })
     }

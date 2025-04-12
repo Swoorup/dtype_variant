@@ -659,9 +659,13 @@ fn generate_matcher_method(
                     type $token_type = #token_type_path;
                 }
             } else {
-                quote! {
+                let inner = include_inner.then_some(quote!{
                     #[allow(unused)]
                     type $generic = #inner_type;
+                }).unwrap_or_default();
+
+                quote! {
+                    #inner
                     #[allow(unused)]
                     type $token_type = #token_type_path;
                 }
