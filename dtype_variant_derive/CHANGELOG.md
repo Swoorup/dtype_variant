@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.5...dtype_variant_derive-v0.0.6) - 2025-04-12
+
+### Other
+
+- Merge pull request #11 from Swoorup/sj-dest-constraint-pattern
+- Fix generics, and allow generic pattern match
+
 ## [0.0.5](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.4...dtype_variant_derive-v0.0.5) - 2025-04-12
 
 ### Other
