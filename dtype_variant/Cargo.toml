@@ -1,0 +1,11 @@
+[package]
+name = "dtype_variant"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+
+[dependencies]
+dtype_variant_derive = { workspace = true }
