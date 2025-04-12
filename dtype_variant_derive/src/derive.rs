@@ -148,6 +148,7 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     );
     let downcast_methods = generate_downcast_methods(&dtype_variant_path, enum_name, generics, &parsed_variants);
     let matcher_method = generate_matcher_method(
+        &dtype_variant_path,
         enum_name,
         generics,
         &parsed_variants,
@@ -507,9 +508,32 @@ fn generate_from_impls(
         })
     });
 
+    // Check if all variants are unit types
+    let all_unit_variants = parsed_variants.iter().all(|v| v.is_unit);
+
+    // Generate from_variant implementation if all variants are unit types
+    let from_variant_impl = if all_unit_variants {
+        quote! {
+            impl #impl_generics #enum_name #ty_generics #where_clause {
+                /// Creates a new instance of the enum from a variant token.
+                /// The variant token must implement Default.
+                pub fn from_variant<V>() -> Self
+                where
+                    Self: From<V>,
+                    V: Default,
+                {
+                    Self::from(V::default())
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         #(#payload_from_impls)*
         #(#unit_from_impls)*
+        #from_variant_impl
     }
 }
 
@@ -558,6 +582,7 @@ fn generate_downcast_methods(
 
 /// Generates a macro for pattern matching on enum variants if `matcher` name is provided.
 fn generate_matcher_method(
+    dtype_variant_path: &Path,
     enum_name: &Ident,
     _generics: &Generics,
     parsed_variants: &[ParsedVariantInfo],
@@ -569,31 +594,35 @@ fn generate_matcher_method(
         None => return quote! {}, // No matcher name specified
     };
 
+    // Check if all variants are unit variants
+    let all_unit_variants = parsed_variants.iter().all(|v| v.is_unit);
+
     // Generate the hidden internal macro name with underscore prefix
     let internal_matcher_name = format_ident!("_{}", matcher_name);
 
     // Check if tokens_path starts with "crate" to determine if we should use $crate
-    let use_crate_macro = tokens_path
+    let use_token_path_crate_macro = tokens_path
         .segments
         .first()
         .map(|seg| seg.ident == "crate")
         .unwrap_or(false);
 
-    enum ArmVariantVar {
-        None,
-        InnerOnly,
-        InnerAndVariant,
-    }
+    // Check if dtype_variant_path starts with "crate" to determine if we should use $crate
+    let use_dtype_variant_path_crate_macro = dtype_variant_path
+        .segments
+        .first()
+        .map(|seg| seg.ident == "crate")
+        .unwrap_or(false);
 
     // Generate match arms for the macro
-    let generate_arms = |arm: ArmVariantVar| {
+    let generate_arms = |include_inner: bool, include_dest: bool| {
         parsed_variants.iter().map(move |v| {
             let variant_ident = &v.variant_ident;
             let token_ident = &v.token_ident;
             let inner_type = v.inner_type.as_ref().map(|ty| quote! { #ty }).unwrap_or(quote! { () });
 
             // Generate the token type with proper path
-            let token_type_path = if use_crate_macro {
+            let token_type_path = if use_token_path_crate_macro {
                 // Extract the rest of the path after "crate::"
                 let mut rest_path = TokenStream2::new();
                 for segment in tokens_path.segments.iter().skip(1) {
@@ -608,58 +637,64 @@ fn generate_matcher_method(
                 quote! { #tokens_path :: #token_ident }
             };
 
-            // Common type declarations
-            let type_declarations = quote! {
-                #[allow(unused)]
-                type $generic = #inner_type;
-                #[allow(unused)]
-                type $token_type = #token_type_path;
+            let dtype_variant_path = if use_dtype_variant_path_crate_macro {
+                // Extract the rest of the path after "crate::"
+                let mut rest_path = TokenStream2::new();
+                for segment in dtype_variant_path.segments.iter().skip(1) {
+                    let ident = &segment.ident;
+                    let args = &segment.arguments;
+                    rest_path.extend(quote! { :: #ident #args });
+                }
+
+                // Use $crate directly in the quoted code
+                quote! { $crate #rest_path  }
+            } else {
+                quote! { #dtype_variant_path  }
             };
 
-            // Optional variant instantiation
-            let variant_instantiation = if matches!(arm, ArmVariantVar::InnerAndVariant) {
+            // Common type declarations - skip generic type for all-unit variants
+            let type_declarations = if all_unit_variants {
                 quote! {
                     #[allow(unused)]
-                    let $variant = #token_type_path;
+                    type $token_type = #token_type_path;
                 }
             } else {
-                quote! {}
-            };
-
-            let (pattern, inner_decl) = match arm {
-                ArmVariantVar::None => {
-                    let pattern = if v.is_unit {
-                        quote! { #enum_name::#variant_ident }
-                    } else {
-                        quote! { #enum_name::#variant_ident(_) }
-                    };
-
-                    let inner_decl = quote! {};
-                    (pattern, inner_decl)
-                }
-                _ => {
-                    if v.is_unit {
-                        let pattern = quote! { #enum_name::#variant_ident };
-                        let inner_decl = quote! {
-                            #[allow(unused)]
-                            let $inner = #inner_type;
-                        };
-
-                        (pattern, inner_decl)
-                    } else {
-                        let pattern = quote! { #enum_name::#variant_ident($inner) };
-                        let inner_decl = quote! {};
-
-                        (pattern, inner_decl)
-                    }
+                quote! {
+                    #[allow(unused)]
+                    type $generic = #inner_type;
+                    #[allow(unused)]
+                    type $token_type = #token_type_path;
                 }
             };
+
+            let pattern = match (include_inner, v.is_unit) {
+                (_, true) => quote! { #enum_name::#variant_ident },
+                (false, false) => quote! { #enum_name::#variant_ident(_) },
+                (true, false) => quote! { #enum_name::#variant_ident($inner) },
+            };
+
+            let inner_decl = match (include_inner, v.is_unit) {
+                (false, _) | (true, false) => quote! {},
+                (true, true) => (!all_unit_variants)
+                    .then_some(quote! {
+                        #[allow(unused)]
+                        let $inner = #inner_type;
+                    })
+                    .unwrap_or_default(),
+            };
+
+            let dest_generic = include_dest
+                .then_some(quote! {
+                    type $dest_generic = <$dest_enum as #dtype_variant_path::EnumVariantDowncast<#token_type_path>>::Target;
+                })
+                .unwrap_or_default();
 
             quote! {
                 #pattern => {
                     #inner_decl
                     #type_declarations
-                    #variant_instantiation
+                    #dest_generic
+
                     #[allow(unused_braces)]
                     $body
                 }
@@ -667,31 +702,66 @@ fn generate_matcher_method(
         })
     };
 
-    let tuple_variant_arms = generate_arms(ArmVariantVar::None);
-    let tuple_variant_arms_with_inner = generate_arms(ArmVariantVar::InnerOnly);
-    let tuple_variant_arms_with_both = generate_arms(ArmVariantVar::InnerAndVariant);
+    let generate_macro_arms = |include_inner: bool, include_dest: bool| {
+        let tuple_variant_arms = generate_arms(include_inner, include_dest);
+        let source_enum_type = if include_inner {
+            quote! {
+                $enum_:ident<$generic:ident, $token_type:ident>
+            }
+        } else {
+            quote! {
+                $enum_:ident<$token_type:ident>
+            }
+        };
 
-    // Generate the macro definition
-    quote! {
-        #[doc(hidden)]
-        #[macro_export]
-        macro_rules! #internal_matcher_name {
-            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident> => $body:block) => {
+        let macro_arm_inner = include_inner.then_some(quote!(($inner:ident))).unwrap_or_default();
+
+        let dest_enum_type = include_dest
+            .then_some(quote! {
+                , $dest_enum:ident<$dest_generic:ident>
+            })
+            .unwrap_or_default();
+
+        quote! {
+            ($value:expr, #source_enum_type #macro_arm_inner #dest_enum_type => $body:block) => {
                 match $value {
                     #(#tuple_variant_arms)*
                 }
             };
-            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident>($inner:ident) => $body:block) => {
-                match $value {
-                    #(#tuple_variant_arms_with_inner)*
-                }
-            };
-            ($value:expr, $enum_:ident<$generic:ident, $token_type:ident>($inner:ident, $variant:ident) => $body:block) => {
-                match $value {
-                    #(#tuple_variant_arms_with_both)*
-                }
-            };
         }
-        pub use #internal_matcher_name as #matcher_name;
+    };
+
+    if all_unit_variants {
+        let arm_without_dest = generate_macro_arms(false, false);
+        let arm_with_dest = generate_macro_arms(false, true);
+
+        // Generate the macro definition
+        quote! {
+                #[doc(hidden)]
+                #[macro_export]
+                macro_rules! #internal_matcher_name {
+                    #arm_without_dest
+                    #arm_with_dest
+                }
+                pub use #internal_matcher_name as #matcher_name;
+        }
+    } else {
+        let no_inner_no_dest = generate_macro_arms(false, false);
+        let inner_no_dest = generate_macro_arms(true, false);
+        let inner_dest = generate_macro_arms(true, true);
+        let no_inner_dest = generate_macro_arms(false, true);
+
+        // Generate the macro definition
+        quote! {
+                #[doc(hidden)]
+                #[macro_export]
+                macro_rules! #internal_matcher_name {
+                    #no_inner_no_dest
+                    #inner_no_dest
+                    #inner_dest
+                    #no_inner_dest
+                }
+                pub use #internal_matcher_name as #matcher_name;
+        }
     }
 }

@@ -53,7 +53,7 @@ mod tests {
     fn test_simple_enum() {
         let a = MyEnumVariant::U16;
         let _b = MyEnumVariant::U32;
-        test_match_enum_variant!(a, MyEnumVariant<T, VariantToken>(inner) => {
+        test_match_enum_variant!(a, MyEnumVariant<VariantToken> => {
         });
     }
 
