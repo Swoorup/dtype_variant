@@ -1,0 +1,16 @@
+[package]
+name = "dtype_variant"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+description = """
+    Enables type-safe enum variants with shared type tokens across multiple enums,
+    allowing for synchronized variant types and powerful downcasting capabilities between related enums.
+"""
+
+
+[dependencies]
+dtype_variant_derive = { workspace = true }

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["dtype_variant", "dtype_variant_derive", "examples/*"]
+
+[workspace.package]
+authors = ["Swoorup Joshi <swoorupj@gmail.com>"]
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+keywords = ["enum", "variant", "type-safety", "downcasting", "pattern-matching"]
+repository = "https://github.com/Swoorup/dtype_variant"
+
+[workspace.dependencies]
+dtype_variant = { path = "dtype_variant", version = "0.0.1" }
+dtype_variant_derive = { path = "dtype_variant_derive", version = "0.0.1" }
+
+darling = "0.20.11"
+proc-macro-crate = "3.3.0"
+proc-macro2 = "1.0.94"
+quote = "1.0.40"
+syn = "2.0.100"
+paste = "1.0.15"
