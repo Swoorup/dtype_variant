@@ -615,7 +615,7 @@ fn generate_matcher_method(
         .unwrap_or(false);
 
     // Generate match arms for the macro
-    let generate_arms = |include_inner: bool, include_dest: bool| {
+    let generate_arms = |include_inner: bool, include_dest: bool, dest_constraint: bool| {
         parsed_variants.iter().map(move |v| {
             let variant_ident = &v.variant_ident;
             let token_ident = &v.token_ident;
@@ -689,7 +689,15 @@ fn generate_matcher_method(
 
             let dest_generic = include_dest
                 .then_some(quote! {
+                    #[allow(unused)]
                     type $dest_generic = <$dest_enum as #dtype_variant_path::EnumVariantDowncast<#token_type_path>>::Target;
+                })
+                .unwrap_or_default();
+
+            let dest_constraint = dest_constraint
+                .then_some(quote! {
+                    #[allow(unused)]
+                    type $dest_constraint = <$dest_enum as #dtype_variant_path::EnumVariantConstraint<#token_type_path>>::Constraint;
                 })
                 .unwrap_or_default();
 
@@ -698,6 +706,7 @@ fn generate_matcher_method(
                     #inner_decl
                     #type_declarations
                     #dest_generic
+                    #dest_constraint
 
                     #[allow(unused_braces)]
                     $body
@@ -706,8 +715,8 @@ fn generate_matcher_method(
         })
     };
 
-    let generate_macro_arms = |include_inner: bool, include_dest: bool| {
-        let tuple_variant_arms = generate_arms(include_inner, include_dest);
+    let generate_macro_arms = |include_inner: bool, include_dest: bool, dest_constraint: bool| {
+        let tuple_variant_arms = generate_arms(include_inner, include_dest, dest_constraint);
         let source_enum_type = if include_inner {
             quote! {
                 $enum_:ident<$generic:ident, $token_type:ident>
@@ -720,11 +729,15 @@ fn generate_matcher_method(
 
         let macro_arm_inner = include_inner.then_some(quote!(($inner:ident))).unwrap_or_default();
 
-        let dest_enum_type = include_dest
-            .then_some(quote! {
+        let dest_enum_type = match (include_dest, dest_constraint) {
+            (true, true) => quote! {
+                , $dest_enum:ident<$dest_generic:ident, $dest_constraint:ident>
+            },
+            (true, false) => quote! {
                 , $dest_enum:ident<$dest_generic:ident>
-            })
-            .unwrap_or_default();
+            },
+            (false, _) => quote!(),
+        };
 
         quote! {
             ($value:expr, #source_enum_type #macro_arm_inner #dest_enum_type => $body:block) => {
@@ -736,24 +749,28 @@ fn generate_matcher_method(
     };
 
     if all_unit_variants {
-        let arm_without_dest = generate_macro_arms(false, false);
-        let arm_with_dest = generate_macro_arms(false, true);
+        let no_dest = generate_macro_arms(false, false, false);
+        let dest_no_constraint = generate_macro_arms(false, true, false);
+        let dest_constraint = generate_macro_arms(false, true, true);
 
         // Generate the macro definition
         quote! {
                 #[doc(hidden)]
                 #[macro_export]
                 macro_rules! #internal_matcher_name {
-                    #arm_without_dest
-                    #arm_with_dest
+                    #no_dest
+                    #dest_no_constraint
+                    #dest_constraint
                 }
                 pub use #internal_matcher_name as #matcher_name;
         }
     } else {
-        let no_inner_no_dest = generate_macro_arms(false, false);
-        let inner_no_dest = generate_macro_arms(true, false);
-        let inner_dest = generate_macro_arms(true, true);
-        let no_inner_dest = generate_macro_arms(false, true);
+        let no_inner_no_dest = generate_macro_arms(false, false, false);
+        let inner_no_dest = generate_macro_arms(true, false, false);
+        let inner_dest_no_constraint = generate_macro_arms(true, true, false);
+        let inner_dest_constraint = generate_macro_arms(true, true, true);
+        let no_inner_dest_no_constraint = generate_macro_arms(false, true, false);
+        let no_inner_dest_constraint = generate_macro_arms(false, true, true);
 
         // Generate the macro definition
         quote! {
@@ -762,8 +779,10 @@ fn generate_matcher_method(
                 macro_rules! #internal_matcher_name {
                     #no_inner_no_dest
                     #inner_no_dest
-                    #inner_dest
-                    #no_inner_dest
+                    #inner_dest_no_constraint
+                    #inner_dest_constraint
+                    #no_inner_dest_no_constraint
+                    #no_inner_dest_constraint
                 }
                 pub use #internal_matcher_name as #matcher_name;
         }
