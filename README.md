@@ -12,23 +12,136 @@ A Rust derive macro for creating type-safe enum variants with shared type tokens
 - 🎯 Flexible pattern matching through generated macros
 - 🛠️ Convenient From implementations for variant types
 
-For example, you can define primitive type tokens that are shared between a type enum and its corresponding data container:
+## Why?
+
+Let's say you're building a data processing pipeline where you need to handle different numeric types. Without `dtype_variant`, you might start with something like this:
 
 ```rust
-#[derive(DType)]
-enum PrimType {    // Type enum
-    I32,
-    F32,
+// Define types that your system can handle
+enum NumericType {
+    Integer,
+    Float,
+    Complex,
 }
 
-#[derive(DType)]
-enum DataChunk {   // Data container enum
-    I32(Vec<i32>),
-    F32(Vec<f32>),
+// Store actual data
+enum NumericData {
+    Integer(Vec<i64>),
+    Float(Vec<f64>),
+    Complex(Vec<Complex64>),
+}
+
+// Processing functions
+impl NumericData {
+    fn get_type(&self) -> NumericType {
+        match self {
+            NumericData::Integer(_) => NumericType::Integer,
+            NumericData::Float(_) => NumericType::Float,
+            NumericData::Complex(_) => NumericType::Complex,
+        }
+    }
+
+    fn as_float_vec(&self) -> Option<&Vec<f64>> {
+        match self {
+            NumericData::Float(v) => Some(v),
+            _ => None
+        }
+    }
+
+    fn as_integer_vec(&self) -> Option<&Vec<i64>> {
+        match self {
+            NumericData::Integer(v) => Some(v),
+            _ => None
+        }
+    }
+
+    fn as_complex_vec(&self) -> Option<&Vec<Complex64>> {
+        match self {
+            NumericData::Complex(v) => Some(v),
+            _ => None
+        }
+    }
 }
 ```
 
-This ensures that operations between related enums remain type-safe and synchronized at compile time.
+This approach has several problems:
+
+1. **Type Safety**: There's no compile-time guarantee that `NumericType` and `NumericData` variants stay in sync
+2. **Boilerplate**: You need to write conversion methods for each type
+3. **Extensibility**: Adding a new numeric type requires changes in multiple places
+4. **Error-prone**: Easy to forget updating one enum when modifying the other
+
+With `dtype_variant`, this becomes:
+
+```rust
+use dtype_variant::DType;
+
+mod tokens {
+    pub struct IntegerVariant;
+    pub struct FloatVariant;
+    pub struct ComplexVariant;
+}
+
+#[derive(DType)]
+#[dtype(tokens = "tokens", container = "Vec")]
+enum NumericData {
+    Integer(Vec<i64>),
+    Float(Vec<f64>),
+    Complex(Vec<Complex64>),
+}
+```
+
+Now you get:
+
+1. **Type Safety**: Downcasting is handled through token types at compile time
+2. **Zero Boilerplate**: Generic downcasting methods are automatically implemented
+3. **Easy Extension**: Just add a new variant and its token type
+4. **Pattern Matching**: Generated macros for ergonomic handling
+
+```rust
+fn process_data(data: &NumericData) {
+    // Type-safe downcasting with zero boilerplate
+    if let Some(floats) = data.downcast_ref::<tokens::FloatVariant>() {
+        println!("Processing float data: {:?}", floats);
+    }
+}
+
+// Or use the generated pattern matching macro
+match_numeric!(data, NumericData<T, Token>(values) => {
+    println!("Processing {} data: {:?}",
+             std::any::type_name::<T>(), values);
+});
+```
+
+The crate especially shines when you have multiple related enums that need to stay in sync:
+
+```rust
+#[derive(DType)]
+#[dtype(tokens = "tokens")]
+enum NumericType {  // Type enum
+    Integer,
+    Float,
+    Complex,
+}
+
+#[derive(DType)]
+#[dtype(tokens = "tokens")]
+enum NumericStats {  // Stats enum
+    Integer(MinMaxStats<i64>),
+    Float(MinMaxStats<f64>),
+    Complex(ComplexStats),
+}
+
+#[derive(DType)]
+#[dtype(tokens = "tokens", container = "Vec")]
+enum NumericData {  // Data enum
+    Integer(Vec<i64>),
+    Float(Vec<f64>),
+    Complex(Vec<Complex64>),
+}
+```
+
+All these enums share the same token types, ensuring they stay in sync and can safely interact with each other through the type system.
 
 ## Installation
 
