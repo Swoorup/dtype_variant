@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.3...dtype_variant_derive-v0.0.4) - 2025-04-12
+
+### Other
+
+- Update readme for better example
+
 ## [0.0.3](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.2...dtype_variant_derive-v0.0.3) - 2025-04-12
 
 ### Added
