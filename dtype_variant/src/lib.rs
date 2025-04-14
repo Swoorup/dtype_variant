@@ -151,8 +151,10 @@ mod tests {
         grouped_matcher = "match_my_enum_grouped, {
             Numeric: [A, B],
             UnitLike: [C, D]
-        }"
+        }",
+        skip_from_impls = true
     )]
+    #[allow(dead_code)]
     enum MyEnum2 {
         A(u32),
         B(u64),
