@@ -15,8 +15,9 @@ dtype_variant = { path = "dtype_variant", version = "0.0.6" }
 dtype_variant_derive = { path = "dtype_variant_derive", version = "0.0.6" }
 
 darling = "0.20.11"
+indexmap = "2.9.0"
+paste = "1.0.15"
 proc-macro-crate = "3.3.0"
 proc-macro2 = "1.0.94"
 quote = "1.0.40"
 syn = "2.0.100"
-paste = "1.0.15"
