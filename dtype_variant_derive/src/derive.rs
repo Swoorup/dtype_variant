@@ -908,31 +908,38 @@ fn generate_matcher_method(
     // Generate all combinations of macro arms (same logic as before, calling the new generate_macro_arms)
     let macro_rule_arms = if all_unit_variants {
         vec![
-            generate_macro_rule_arm(false, false, false, false, false),
-            generate_macro_rule_arm(false, false, true, false, false),
-            generate_macro_rule_arm(false, false, true, true, false),
-            generate_macro_rule_arm(false, false, true, false, true),
-            generate_macro_rule_arm(false, false, true, true, true),
+            generate_macro_rule_arm(false, false, false, false, false, false),
+            generate_macro_rule_arm(false, false, false, true, false, false),
+            generate_macro_rule_arm(false, false, false, true, true, false),
+            generate_macro_rule_arm(false, false, false, true, false, true),
+            generate_macro_rule_arm(false, false, false, true, true, true),
         ]
     } else {
         vec![
-            generate_macro_rule_arm(false, false, false, false, false),
-            generate_macro_rule_arm(true, false, false, false, false),
-            generate_macro_rule_arm(true, true, false, false, false),
-            // Dest Type variations
-            generate_macro_rule_arm(true, false, true, false, false),
-            generate_macro_rule_arm(true, false, true, true, false),
-            generate_macro_rule_arm(true, true, true, false, false),
-            generate_macro_rule_arm(true, true, true, true, false),
-            generate_macro_rule_arm(false, false, true, false, false),
-            generate_macro_rule_arm(false, false, true, true, false),
-            // Dest Constraint variations
-            generate_macro_rule_arm(true, false, true, false, true),
-            generate_macro_rule_arm(true, false, true, true, true),
-            generate_macro_rule_arm(true, true, true, false, true),
-            generate_macro_rule_arm(true, true, true, true, true),
-            generate_macro_rule_arm(false, false, true, false, true),
-            generate_macro_rule_arm(false, false, true, true, true),
+            generate_macro_rule_arm(false, false, false, false, false, false),
+            generate_macro_rule_arm(false, false, false, true, false, false),
+            generate_macro_rule_arm(false, false, false, true, false, true),
+            generate_macro_rule_arm(false, false, false, true, true, false),
+            generate_macro_rule_arm(false, false, false, true, true, true),
+            generate_macro_rule_arm(false, true, false, false, false, false),
+            generate_macro_rule_arm(false, true, false, true, false, false),
+            generate_macro_rule_arm(false, true, false, true, false, true),
+            generate_macro_rule_arm(false, true, false, true, true, false),
+            generate_macro_rule_arm(false, true, false, true, true, true),
+            generate_macro_rule_arm(false, true, true, false, false, false),
+            generate_macro_rule_arm(false, true, true, true, false, false),
+            generate_macro_rule_arm(false, true, true, true, false, true),
+            generate_macro_rule_arm(false, true, true, true, true, true),
+            generate_macro_rule_arm(true, true, false, false, false, false),
+            generate_macro_rule_arm(true, true, false, true, false, false),
+            generate_macro_rule_arm(true, true, false, true, false, true),
+            generate_macro_rule_arm(true, true, false, true, true, false),
+            generate_macro_rule_arm(true, true, false, true, true, true),
+            generate_macro_rule_arm(true, true, true, false, false, false),
+            generate_macro_rule_arm(true, true, true, true, false, false),
+            generate_macro_rule_arm(true, true, true, true, false, true),
+            generate_macro_rule_arm(true, true, true, true, true, false),
+            generate_macro_rule_arm(true, true, true, true, true, true),
         ]
     };
 
@@ -1040,67 +1047,74 @@ fn generate_grouped_matcher_macro(
     };
 
     // --- Define the Macro Rule ---
-    // Captures `macro!(value, [V1, V2] (inner) => { body0 }, [V3] => { body1 })`
-    let group_pattern_arms = groups
-        .iter()
-        .enumerate()
-        .map(|(group_index, (group_name, group_variants))| {
-            let group_variants: Vec<ParsedVariantInfo> = group_variants
-                .iter()
-                .map(|ident| variant_info_map[&ident.to_string()])
-                .cloned()
-                .collect();
-
-            let generate_macro_rule_arm = generate_macro_rule_arm(
-                enum_name,
-                &group_variants,
-                tokens_path.clone(),
-                &dtype_variant_path,
-                Some(group_index as _),
-            );
-
-            let all_unit_variants =
-                group_variants.iter().all(|info| info.is_unit);
-
-            // #(#group_variants,)*
-            let arm = if all_unit_variants {
-                generate_macro_rule_arm(false, false, false, false, false)
-            } else {
-                generate_macro_rule_arm(true, false, false, false, false)
-            };
-
-            (group_name, arm)
-        })
-        .collect::<Vec<_>>();
-
-    let group_match_pattern_fragment = {
-        let fragments = group_pattern_arms.iter().map(|(name, arm)| {
-            let prefix = &arm.pattern_prefix_fragment;
-            let suffix = &arm.pattern_suffix_fragment;
-            quote! {
-                #name : #prefix #suffix
-            }
-        });
-
-        quote! {
-            #(#fragments,)*
-        }
-    };
-
-    let all_bodies = {
-        let ts = group_pattern_arms
+    let create_group_macro_arm = |include_src_ty: bool| {
+        // Captures `macro!(value, [V1, V2] (inner) => { body0 }, [V3] => { body1 })`
+        let group_pattern_arms = groups
             .iter()
-            .map(|(_, arm)| &arm.variant_bodies);
+            .enumerate()
+            .map(|(group_index, (group_name, group_variants))| {
+                let group_variants: Vec<ParsedVariantInfo> = group_variants
+                    .iter()
+                    .map(|ident| variant_info_map[&ident.to_string()])
+                    .cloned()
+                    .collect();
+
+                let generate_macro_rule_arm = generate_macro_rule_arm(
+                    enum_name,
+                    &group_variants,
+                    tokens_path.clone(),
+                    &dtype_variant_path,
+                    Some(group_index as _),
+                );
+
+                let all_unit_variants =
+                    group_variants.iter().all(|info| info.is_unit);
+
+                // #(#group_variants,)*
+                let arm = if all_unit_variants {
+                    generate_macro_rule_arm(
+                        false, false, false, false, false, false,
+                    )
+                } else {
+                    generate_macro_rule_arm(
+                        include_src_ty,
+                        true,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )
+                };
+
+                (group_name, arm)
+            })
+            .collect::<Vec<_>>();
+
+        let group_match_pattern_fragment = {
+            let fragments = group_pattern_arms.iter().map(|(name, arm)| {
+                let prefix = &arm.pattern_prefix_fragment;
+                let suffix = &arm.pattern_suffix_fragment;
+                quote! {
+                    #name : #prefix #suffix
+                }
+            });
+
+            quote! {
+                #(#fragments,)*
+            }
+        };
+
+        let all_bodies = {
+            let ts = group_pattern_arms
+                .iter()
+                .map(|(_, arm)| &arm.variant_bodies);
+
+            quote! {
+                #(#ts,)*
+            }
+        };
 
         quote! {
-            #(#ts,)*
-        }
-    };
-
-    quote! {
-        #[doc(hidden)]
-        #[macro_export]
-        macro_rules! #internal_macro_name {
             // Match the user's grouped input structure
             ( $value:expr, #group_match_pattern_fragment ) => {
                 // Expand into the actual Rust match statement
@@ -1108,6 +1122,19 @@ fn generate_grouped_matcher_macro(
                     #all_bodies // Expand the generated match arms here
                 }
             };
+        }
+    };
+
+    let pat1 = create_group_macro_arm(true);
+    let pat2 = create_group_macro_arm(false);
+
+    quote! {
+        #[doc(hidden)]
+        #[macro_export]
+        macro_rules! #internal_macro_name {
+            // Match the user's grouped input structure
+            #pat1
+            #pat2
         }
         #[allow(unused_imports)]
         pub use #internal_macro_name as #macro_name;
