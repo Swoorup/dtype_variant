@@ -8,6 +8,7 @@ pub struct MatchArmParam {
     pub enum_name: Ident, // Needed for context if type paths are relative? Maybe not.
     // --- Flags ---
     pub all_unit_variants: bool, // Optimization for simpler type declarations
+    pub include_src_ty: bool,    // Should $src_type be defined?
     pub include_inner: bool,     // Should $src_type be defined?
     pub src_type_generic: bool,  // Is $src_type generic?
     pub include_dest: bool,      // Should $dest_type be defined?
@@ -41,6 +42,7 @@ pub fn generate_match_arm_content(
     let MatchArmParam {
         all_unit_variants,
         include_inner,
+        include_src_ty,
         src_type_generic,
         include_dest,
         dest_type_generic,
@@ -61,7 +63,7 @@ pub fn generate_match_arm_content(
         ..
     } = param;
     let token_ident = &variant_info.token_ident;
-    let inner_type = variant_info
+    let src_type = variant_info
         .inner_type
         .as_ref()
         .map(|ty| quote! { #ty })
@@ -78,9 +80,9 @@ pub fn generate_match_arm_content(
         let src_generic = src_type_generic
             .then_some(quote! { < #src_type_generic_ident > })
             .unwrap_or_default();
-        let inner_decl = include_inner
+        let inner_decl = include_src_ty
             .then_some(quote! {
-                #[allow(unused)] type #src_type_ident #src_generic = #inner_type;
+                #[allow(unused)] type #src_type_ident #src_generic = #src_type;
             })
             .unwrap_or_default();
 
@@ -197,10 +199,11 @@ pub fn generate_macro_rule_arm(
     tokens_path: TokenStream2,
     dtype_variant_path: &TokenStream2,
     bindname_suffix: Option<u8>,
-) -> impl Fn(bool, bool, bool, bool, bool) -> MacroRuleArm {
+) -> impl Fn(bool, bool, bool, bool, bool, bool) -> MacroRuleArm {
     let all_unit_variants = parsed_variants.iter().all(|v| v.is_unit);
 
-    move |include_inner: bool,
+    move |include_src_ty: bool,
+          include_inner: bool,
           src_type_generic: bool,
           include_dest: bool,
           dest_type_generic: bool,
@@ -238,6 +241,7 @@ pub fn generate_macro_rule_arm(
             dest_constraint_ident: dest_constraint_ident.clone(),
             dest_constraint_generic_ident: dest_constraint_generic_ident
                 .clone(),
+            include_src_ty,
             include_inner,
             src_type_generic,
             include_dest,
@@ -256,7 +260,7 @@ pub fn generate_macro_rule_arm(
             generate_match_arms_for_regular_matcher(&param, parsed_variants);
 
         // Define the outer macro rule pattern (same as before)
-        let source_enum_type = if include_inner {
+        let source_enum_type = if include_src_ty {
             let src_generic = src_type_generic
                 .then_some(quote!(<#src_type_generic_ident:tt>))
                 .unwrap_or_default();

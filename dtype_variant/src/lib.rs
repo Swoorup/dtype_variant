@@ -164,9 +164,15 @@ mod tests {
 
     #[test]
     fn test_match_grouped() {
-        let val = MyEnum2::A(42);
-
-        let str = match_my_enum_grouped!(val,
+        let str_a = match_my_enum_grouped!(MyEnum2::A(42),
+            Numeric:MyEnum2<Variant>(inner) => {
+                format!("Integer variant: {}", inner)
+            },
+            UnitLike:MyEnum2<Variant> => {
+                "C, D variant".to_string()
+            },
+        );
+        let str_c = match_my_enum_grouped!(MyEnum2::C,
             Numeric:MyEnum2<T, Variant>(inner) => {
                 format!("Integer variant: {}", inner)
             },
@@ -175,6 +181,7 @@ mod tests {
             },
         );
 
-        assert_eq!(str, "Integer variant: 42");
+        assert_eq!(str_a, "Integer variant: 42");
+        assert_eq!(str_c, "C, D variant");
     }
 }
