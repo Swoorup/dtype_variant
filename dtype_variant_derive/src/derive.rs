@@ -791,6 +791,7 @@ fn generate_from_impls(
     if skip_from_impls {
         quote! {
             #from_variant_impl
+            #(#unit_from_impls)*
         }
     } else {
         quote! {
