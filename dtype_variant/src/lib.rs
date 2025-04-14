@@ -29,7 +29,11 @@ mod tests {
     build_dtype_tokens!([U16, U32, U64]);
 
     #[derive(Clone, Debug, Default, DType)]
-    #[dtype(matcher = "match_my_enum_variant", tokens = "self", constraint = "Constraint")]
+    #[dtype(
+        matcher = "match_my_enum_variant",
+        tokens = "self",
+        constraint = "Constraint"
+    )]
     pub enum MyEnumVariant {
         U16,
         U32,
@@ -137,5 +141,38 @@ mod tests {
             let str_repr = value.to_string();
             assert_eq!(str_repr, "3.14");
         });
+    }
+
+    build_dtype_tokens!([A, B, C, D]);
+
+    #[derive(DType)]
+    #[dtype(
+        tokens = "self",
+        grouped_matcher = "match_my_enum_grouped, {
+            Numeric: [A, B],
+            UnitLike: [C, D]
+        }"
+    )]
+    enum MyEnum2 {
+        A(u32),
+        B(u64),
+        C,
+        D,
+    }
+
+    #[test]
+    fn test_match_grouped() {
+        let val = MyEnum2::A(42);
+
+        let str = match_my_enum_grouped!(val,
+            Numeric:MyEnum2<T, Variant>(inner) => {
+                format!("Integer variant: {}", inner)
+            },
+            UnitLike:MyEnum2<Variant> => {
+                "C, D variant".to_string()
+            },
+        );
+
+        assert_eq!(str, "Integer variant: 42");
     }
 }

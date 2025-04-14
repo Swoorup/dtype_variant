@@ -3,12 +3,16 @@ use quote::{format_ident, quote};
 use syn::{Ident, Token, parse_macro_input, punctuated::Punctuated};
 
 mod derive;
+mod matcher_gen;
 
 pub(crate) fn dtype_variant_path() -> syn::Path {
-    let found_crate = proc_macro_crate::crate_name("dtype_variant").expect("dtype_variant is present in `Cargo.toml`");
+    let found_crate = proc_macro_crate::crate_name("dtype_variant")
+        .expect("dtype_variant is present in `Cargo.toml`");
     match found_crate {
         proc_macro_crate::FoundCrate::Itself => format_ident!("crate").into(),
-        proc_macro_crate::FoundCrate::Name(name) => syn::parse(name.parse().unwrap()).unwrap(),
+        proc_macro_crate::FoundCrate::Name(name) => {
+            syn::parse(name.parse().unwrap()).unwrap()
+        }
     }
 }
 

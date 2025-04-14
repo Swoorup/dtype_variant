@@ -1,16 +1,21 @@
 #![allow(non_snake_case)]
 
 use darling::FromDeriveInput;
+use indexmap::{IndexMap, IndexSet};
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{ToTokens as _, format_ident, quote};
+use syn::parse::ParseStream;
+use syn::punctuated::Punctuated;
 use syn::{Data, Error, Generics, Ident, Path};
 use syn::{
-    DataEnum, DeriveInput, Fields, GenericArgument, PathArguments, Type, TypePath, WhereClause, parse::Parse,
-    parse_macro_input, parse_quote,
+    DataEnum, DeriveInput, Fields, GenericArgument, PathArguments,
+    Result as SynResult, Token, Type, TypePath, WhereClause, braced, bracketed,
+    parse::Parse, parse_macro_input, parse_quote,
 };
 
 use crate::dtype_variant_path;
+use crate::matcher_gen::{MacroRuleArm, generate_macro_rule_arm};
 
 /// Parses the top-level `#[dtype(...)]` attribute applied to the enum.
 #[derive(Debug, FromDeriveInput)]
@@ -44,22 +49,40 @@ struct DTypeMacroArgs {
     /// Example: `"match_variant"`
     #[darling(default)]
     matcher: Option<String>,
+
+    /// Optional. Defines a grouped matcher macro.
+    /// Format: `"macro_name, { Numeric: [VariantA, VariantB], UnitLike: [VariantC] }"`
+    #[darling(default)]
+    grouped_matcher: Option<String>,
+
+    /// Optional. If true, skips generating From impls for the enum variants.
+    #[darling(default)]
+    skip_from_impls: bool,
 }
 
-#[derive(Debug)]
-struct ParsedVariantInfo {
+#[derive(Debug, Clone)]
+pub struct ParsedVariantInfo {
     /// Identifier of the enum variant (e.g., `MyVariant`).
-    variant_ident: Ident,
+    pub variant_ident: Ident,
     /// Identifier of the corresponding token (e.g., `MyVariantVariant`).
-    token_ident: Ident,
+    pub token_ident: Ident,
     /// The full type of the field in a tuple variant (e.g., `Vec<u16>` or `f64`).
     /// `None` for unit variants.
-    full_field_type: Option<Type>,
+    pub full_field_type: Option<Type>,
     /// The inner payload type (e.g., `u16` from `Vec<u16>`, or `f64` if no container).
     /// `None` for unit variants.
-    inner_type: Option<Type>,
+    pub inner_type: Option<Type>,
     /// True if this is a unit variant (e.g., `MyUnitVariant`).
-    is_unit: bool,
+    pub is_unit: bool,
+}
+
+// In ParsedGroupedMatcher definition:
+#[derive(Debug, Clone)]
+struct ParsedGroupedMatcher {
+    macro_name: Ident,
+    /// Vector of groups: (GroupName, Vec<VariantIdent>)
+    groups: Vec<(Ident, Vec<Ident>)>, // Changed from Vec<Vec<Ident>>
+    _span: Span,
 }
 
 pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
@@ -120,12 +143,30 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
 
+    // Parse the grouped_matcher attribute string.
+    let grouped_matcher_parse_result =
+        parse_grouped_matcher_string(&args.grouped_matcher, args.ident.span());
+    let parsed_grouped_matcher_opt = match grouped_matcher_parse_result {
+        Ok(opt) => opt,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    // Validate the grouped matcher definition against parsed variants.
+    if let Some(ref parsed_grouped_matcher) = parsed_grouped_matcher_opt {
+        if let Err(e) =
+            validate_grouped_matcher(parsed_grouped_matcher, &parsed_variants)
+        {
+            return e.to_compile_error().into();
+        }
+    }
+
     // Extract components for code generation.
     let enum_name = &args.ident;
     let generics = &args.generics;
 
     // Generate the different code blocks using helper functions.
-    let token_validation_code = generate_token_validation(&tokens_path, &parsed_variants);
+    let token_validation_code =
+        generate_token_validation(&tokens_path, &parsed_variants);
     let target_impls = generate_enum_variant_downcast(
         &dtype_variant_path,
         enum_name,
@@ -147,14 +188,28 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         &parsed_variants,
         container_ident_opt.is_some(),
         &tokens_path,
+        args.skip_from_impls,
     );
-    let downcast_methods = generate_downcast_methods(&dtype_variant_path, enum_name, generics, &parsed_variants);
+    let downcast_methods = generate_downcast_methods(
+        &dtype_variant_path,
+        enum_name,
+        generics,
+        &parsed_variants,
+    );
     let matcher_method = generate_matcher_method(
         &dtype_variant_path,
         enum_name,
         generics,
         &parsed_variants,
         &matcher_ident_opt,
+        &tokens_path,
+    );
+    let grouped_matcher_macro = generate_grouped_matcher_macro(
+        &dtype_variant_path,
+        enum_name,
+        generics, // Pass generics
+        &parsed_variants,
+        &parsed_grouped_matcher_opt,
         &tokens_path,
     );
 
@@ -177,6 +232,9 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
 
         // Implementation block containing the matcher method.
         #matcher_method
+
+        // Implementation block containing the grouped matcher macro.
+        #grouped_matcher_macro
     };
 
     // Return the final generated code.
@@ -199,14 +257,21 @@ struct ParsedPaths {
 fn parse_config_paths(args: &DTypeMacroArgs) -> Result<ParsedPaths, Error> {
     // Helper closure to parse a string into a syn type T that implements Parse.
     // Associates errors with the span of the enum identifier for context.
-    fn parse_string<T: Parse>(args: &DTypeMacroArgs, s_opt: &Option<String>, name: &str) -> Result<Option<T>, Error> {
+    fn parse_string<T: Parse>(
+        args: &DTypeMacroArgs,
+        s_opt: &Option<String>,
+        name: &str,
+    ) -> Result<Option<T>, Error> {
         s_opt
             .as_ref()
             .map(|s| {
                 syn::parse_str(s).map_err(|e| {
                     Error::new(
                         args.ident.span(),
-                        format!("Failed to parse `{}` string \"{}\": {}", name, s, e),
+                        format!(
+                            "Failed to parse `{}` string \"{}\": {}",
+                            name, s, e
+                        ),
                     )
                 })
             })
@@ -214,9 +279,12 @@ fn parse_config_paths(args: &DTypeMacroArgs) -> Result<ParsedPaths, Error> {
     }
 
     let tokens_path: Option<Path> = parse_string(args, &args.tokens, "tokens")?;
-    let container_ident: Option<Ident> = parse_string(args, &args.container, "container")?;
-    let constraint_path: Option<Path> = parse_string(args, &args.constraint, "constraint")?;
-    let matcher_ident: Option<Ident> = parse_string(args, &args.matcher, "matcher")?;
+    let container_ident: Option<Ident> =
+        parse_string(args, &args.container, "container")?;
+    let constraint_path: Option<Path> =
+        parse_string(args, &args.constraint, "constraint")?;
+    let matcher_ident: Option<Ident> =
+        parse_string(args, &args.matcher, "matcher")?;
 
     Ok(ParsedPaths {
         tokens_path_opt: tokens_path,
@@ -226,13 +294,20 @@ fn parse_config_paths(args: &DTypeMacroArgs) -> Result<ParsedPaths, Error> {
     })
 }
 /// Parses enum variants, extracting types and validating structure.
-fn parse_variants(enum_data: &DataEnum, container_ident: &Option<Ident>) -> Result<Vec<ParsedVariantInfo>, Error> {
+fn parse_variants(
+    enum_data: &DataEnum,
+    container_ident: &Option<Ident>,
+) -> Result<Vec<ParsedVariantInfo>, Error> {
     let mut variants_info = Vec::new();
 
     for variant in &enum_data.variants {
         let variant_ident = variant.ident.clone();
         // Assume token identifier is VariantNameVariant (adjust if needed).
-        let token_ident = format_ident!("{}Variant", variant_ident, span = variant_ident.span());
+        let token_ident = format_ident!(
+            "{}Variant",
+            variant_ident,
+            span = variant_ident.span()
+        );
 
         match &variant.fields {
             Fields::Unit => {
@@ -247,54 +322,8 @@ fn parse_variants(enum_data: &DataEnum, container_ident: &Option<Ident>) -> Resu
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                 let field = fields.unnamed.first().unwrap();
                 let full_field_type = field.ty.clone();
-                let inner_type: Type;
-
-                if let Some(container) = container_ident {
-                    // Attempt to extract T from Container<T>
-                    if let Type::Path(TypePath { path, .. }) = &full_field_type {
-                        if let Some(segment) = path.segments.last() {
-                            if segment.ident == *container {
-                                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                                    if args.args.len() == 1 {
-                                        if let Some(GenericArgument::Type(ty)) = args.args.first() {
-                                            inner_type = ty.clone();
-                                        } else {
-                                            return Err(Error::new_spanned(args, "Container expects a type argument"));
-                                        }
-                                    } else {
-                                        return Err(Error::new_spanned(
-                                            args,
-                                            "Container expects exactly one type argument",
-                                        ));
-                                    }
-                                } else {
-                                    return Err(Error::new_spanned(
-                                        segment,
-                                        "Container expects angle bracketed arguments",
-                                    ));
-                                }
-                            } else {
-                                return Err(Error::new_spanned(
-                                    segment,
-                                    format!(
-                                        "Expected container type `{}`, found `{}`",
-                                        container, segment.ident
-                                    ),
-                                ));
-                            }
-                        } else {
-                            return Err(Error::new_spanned(path, "Cannot get path segment"));
-                        }
-                    } else {
-                        return Err(Error::new_spanned(
-                            &full_field_type,
-                            format!("Expected a path type matching container `{}`", container),
-                        ));
-                    }
-                } else {
-                    // No container specified, the full type is the inner type
-                    inner_type = full_field_type.clone();
-                }
+                let inner_type =
+                    extract_inner_type(&full_field_type, container_ident)?;
 
                 variants_info.push(ParsedVariantInfo {
                     variant_ident,
@@ -321,12 +350,238 @@ fn parse_variants(enum_data: &DataEnum, container_ident: &Option<Ident>) -> Resu
     Ok(variants_info)
 }
 
+/// Helper function to extract the inner type from a container type
+fn extract_inner_type(
+    full_field_type: &Type,
+    container_ident: &Option<Ident>,
+) -> Result<Type, Error> {
+    if let Some(container) = container_ident {
+        // Attempt to extract T from Container<T>
+        if let Type::Path(TypePath { path, .. }) = &full_field_type {
+            if let Some(segment) = path.segments.last() {
+                if segment.ident == *container {
+                    if let PathArguments::AngleBracketed(args) =
+                        &segment.arguments
+                    {
+                        if args.args.len() == 1 {
+                            if let Some(GenericArgument::Type(ty)) =
+                                args.args.first()
+                            {
+                                Ok(ty.clone())
+                            } else {
+                                Err(Error::new_spanned(
+                                    args,
+                                    "Container expects a type argument",
+                                ))
+                            }
+                        } else {
+                            Err(Error::new_spanned(
+                                args,
+                                "Container expects exactly one type argument",
+                            ))
+                        }
+                    } else {
+                        Err(Error::new_spanned(
+                            segment,
+                            "Container expects angle bracketed arguments",
+                        ))
+                    }
+                } else {
+                    Err(Error::new_spanned(
+                        segment,
+                        format!(
+                            "Expected container type `{}`, found `{}`",
+                            container, segment.ident
+                        ),
+                    ))
+                }
+            } else {
+                Err(Error::new_spanned(path, "Cannot get path segment"))
+            }
+        } else {
+            Err(Error::new_spanned(
+                full_field_type,
+                format!(
+                    "Expected a path type matching container `{}`",
+                    container
+                ),
+            ))
+        }
+    } else {
+        // No container specified, the full type is the inner type
+        Ok(full_field_type.clone())
+    }
+}
+
+/// Parses the string provided to `grouped_matcher`.
+/// Format: "macro_name, { [VariantA, VariantB], [VariantC] }"
+fn parse_grouped_matcher_string(
+    grouped_matcher_str_opt: &Option<String>,
+    fallback_span: Span,
+) -> Result<Option<ParsedGroupedMatcher>, Error> {
+    let Some(grouped_matcher_str) = grouped_matcher_str_opt else {
+        return Ok(None);
+    };
+
+    // Use a custom parser to handle the specific format
+    match syn::parse_str::<GroupedMatcherParser>(grouped_matcher_str) {
+        Ok(parsed) => Ok(Some(ParsedGroupedMatcher {
+            macro_name: parsed.macro_name,
+            groups: parsed.groups,
+            _span: fallback_span, // Use fallback span for now, better span info is hard from string
+        })),
+        Err(e) => Err(Error::new(
+            fallback_span, // Associate error with the attribute/enum span
+            format!(
+                "Failed to parse `grouped_matcher` string \"{}\": {}",
+                grouped_matcher_str, e
+            ),
+        )),
+    }
+}
+
+// Helper struct for parsing the `grouped_matcher` string content using syn::parse.
+// Format: macro_name, { GroupName1: [V1, V2], GroupName2: [V3, V4] }
+struct GroupedMatcherParser {
+    macro_name: Ident,
+    groups: Vec<(Ident, Vec<Ident>)>, // Changed
+}
+
+impl Parse for GroupedMatcherParser {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        // 1. Parse Macro Name
+        let macro_name: Ident = input.parse()?;
+
+        // 2. Parse Comma Separator
+        input.parse::<Token![,]>()?;
+
+        // 3. Parse Groups within Braces {}
+        let groups_content;
+        braced!(groups_content in input);
+
+        let mut groups = Vec::new();
+        // Parse comma-separated list of named groups: GroupName: [VariantA, VariantB], ...
+        while !groups_content.is_empty() {
+            // Parse Group Name
+            let group_name: Ident = groups_content.parse()?;
+
+            // Parse Colon Separator
+            groups_content.parse::<Token![:]>()?;
+
+            // Parse Variants within Brackets []
+            let variants_content;
+            bracketed!(variants_content in groups_content);
+
+            let variants_in_group: Punctuated<Ident, Token![,]> =
+                variants_content.parse_terminated(Ident::parse, Token![,])?;
+
+            if variants_in_group.is_empty() {
+                return Err(Error::new(
+                    variants_content.span(),
+                    "Group cannot be empty",
+                ));
+            }
+
+            groups.push((group_name, variants_in_group.into_iter().collect()));
+
+            // Consume optional trailing comma or break if end
+            if groups_content.is_empty() {
+                break;
+            }
+            groups_content.parse::<Token![,]>()?; // Expect comma between groups
+        }
+
+        if groups.is_empty() {
+            return Err(Error::new(
+                input.span(),
+                "Grouped matcher must define at least one group",
+            ));
+        }
+
+        Ok(GroupedMatcherParser { macro_name, groups })
+    }
+}
+
+/// Validates the parsed named grouped matcher against the enum variants.
+fn validate_grouped_matcher(
+    parsed_grouped_matcher: &ParsedGroupedMatcher,
+    parsed_variants: &[ParsedVariantInfo],
+) -> Result<(), Error> {
+    let mut all_grouped_variants = IndexSet::new();
+    let mut duplicate_variant_check = IndexSet::new();
+    let mut duplicate_group_name_check = IndexSet::new();
+    let valid_variant_names: IndexSet<_> = parsed_variants
+        .iter()
+        .map(|v| v.variant_ident.to_string())
+        .collect();
+
+    for (group_name, group_variants) in &parsed_grouped_matcher.groups {
+        // Check for duplicate group names
+        if !duplicate_group_name_check.insert(group_name.to_string()) {
+            return Err(Error::new_spanned(
+                group_name,
+                format!(
+                    "Duplicate group name `{}` found in `grouped_matcher` attribute",
+                    group_name
+                ),
+            ));
+        }
+
+        for variant_ident in group_variants {
+            let variant_name = variant_ident.to_string();
+
+            // Check if variant exists in the enum
+            if !valid_variant_names.contains(&variant_name) {
+                return Err(Error::new_spanned(
+                    variant_ident, // Point to the specific identifier in the attribute
+                    format!(
+                        "Variant `{}` in group `{}` does not exist in the enum",
+                        variant_name, group_name
+                    ),
+                ));
+            }
+
+            // Check if variant is already listed in another group
+            if !duplicate_variant_check.insert(variant_name.clone()) {
+                return Err(Error::new_spanned(
+                    variant_ident,
+                    format!(
+                        "Variant `{}` is listed in multiple groups (`{}` and potentially others)",
+                        variant_name, group_name
+                    ),
+                ));
+            }
+            all_grouped_variants.insert(variant_name);
+        }
+    }
+
+    // Check if all enum variants are covered by the groups
+    for variant_info in parsed_variants {
+        if !all_grouped_variants
+            .contains(&variant_info.variant_ident.to_string())
+        {
+            return Err(Error::new_spanned(
+                &variant_info.variant_ident, // Point to the enum variant definition
+                format!(
+                    "Enum variant `{}` is not included in any group in the `grouped_matcher` attribute",
+                    variant_info.variant_ident
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 //----------------------------------------------------------------------------
 // 5. Helper Functions for Code Generation (`quote!`)
 //----------------------------------------------------------------------------
 
 /// Generates compile-time checks for token existence.
-fn generate_token_validation(tokens_path: &Path, parsed_variants: &[ParsedVariantInfo]) -> TokenStream2 {
+fn generate_token_validation(
+    tokens_path: &Path,
+    parsed_variants: &[ParsedVariantInfo],
+) -> TokenStream2 {
     let validation_checks = parsed_variants.iter().map(|v| {
         let token_ident = &v.token_ident;
         // This code runs at compile time inside the const block.
@@ -460,6 +715,7 @@ fn generate_from_impls(
     parsed_variants: &[ParsedVariantInfo],
     has_container: bool,
     tokens_path: &Path,
+    skip_from_impls: bool,
 ) -> TokenStream2 {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -532,10 +788,16 @@ fn generate_from_impls(
         quote! {}
     };
 
-    quote! {
-        #(#payload_from_impls)*
-        #(#unit_from_impls)*
-        #from_variant_impl
+    if skip_from_impls {
+        quote! {
+            #from_variant_impl
+        }
+    } else {
+        quote! {
+            #(#payload_from_impls)*
+            #(#unit_from_impls)*
+            #from_variant_impl
+        }
     }
 }
 
@@ -583,10 +845,11 @@ fn generate_downcast_methods(
 }
 
 /// Generates a macro for pattern matching on enum variants if `matcher` name is provided.
+/// **Uses `generate_match_arm_content`**.
 fn generate_matcher_method(
     dtype_variant_path: &Path,
     enum_name: &Ident,
-    _generics: &Generics,
+    _generics: &Generics, // Keep signature consistent, used by path closures
     parsed_variants: &[ParsedVariantInfo],
     matcher_ident: &Option<Ident>,
     tokens_path: &Path,
@@ -596,254 +859,256 @@ fn generate_matcher_method(
         None => return quote! {}, // No matcher name specified
     };
 
-    // Check if all variants are unit variants
     let all_unit_variants = parsed_variants.iter().all(|v| v.is_unit);
-
-    // Generate the hidden internal macro name with underscore prefix
     let internal_matcher_name = format_ident!("_{}", matcher_name);
 
-    // Check if tokens_path starts with "crate" to determine if we should use $crate
+    // --- Path Generation Closures --- (Captures tokens_path, dtype_variant_path)
     let use_token_path_crate_macro = tokens_path
         .segments
         .first()
         .map(|seg| seg.ident == "crate")
         .unwrap_or(false);
-
-    // Check if dtype_variant_path starts with "crate" to determine if we should use $crate
     let use_dtype_variant_path_crate_macro = dtype_variant_path
         .segments
         .first()
         .map(|seg| seg.ident == "crate")
         .unwrap_or(false);
 
-    // Generate match arms for the macro
-    let generate_arms = |include_inner: bool,
-                         src_type_generic: bool,
-                         include_dest: bool,
-                         dest_type_generic: bool,
-                         dest_constraint: bool| {
-        parsed_variants.iter().map(move |v| {
-            let variant_ident = &v.variant_ident;
-            let token_ident = &v.token_ident;
-            let inner_type = v.inner_type.as_ref().map(|ty| quote! { #ty }).unwrap_or(quote! { () });
-
-            // Generate the token type with proper path
-            let token_type_path = if use_token_path_crate_macro {
-                // Extract the rest of the path after "crate::"
-                let mut rest_path = TokenStream2::new();
-                for segment in tokens_path.segments.iter().skip(1) {
-                    let ident = &segment.ident;
-                    let args = &segment.arguments;
-                    rest_path.extend(quote! { :: #ident #args });
-                }
-
-                // Use $crate directly in the quoted code
-                quote! { $crate #rest_path :: #token_ident }
-            } else {
-                quote! { #tokens_path :: #token_ident }
-            };
-
-            let dtype_variant_path = if use_dtype_variant_path_crate_macro {
-                // Extract the rest of the path after "crate::"
-                let mut rest_path = TokenStream2::new();
-                for segment in dtype_variant_path.segments.iter().skip(1) {
-                    let ident = &segment.ident;
-                    let args = &segment.arguments;
-                    rest_path.extend(quote! { :: #ident #args });
-                }
-
-                // Use $crate directly in the quoted code
-                quote! { $crate #rest_path  }
-            } else {
-                quote! { #dtype_variant_path  }
-            };
-
-            // Common type declarations - skip generic type for all-unit variants
-            let type_declarations = if all_unit_variants {
-                quote! {
-                    #[allow(unused)]
-                    type $token_type = #token_type_path;
-                }
-            } else {
-                let src_type_generic = src_type_generic.then_some(quote!{
-                    < $src_type_generic >
-                }).unwrap_or_default();
-
-                let inner = include_inner.then_some(quote!{
-                    #[allow(unused)]
-                    type $src_type #src_type_generic = #inner_type;
-                }).unwrap_or_default();
-
-                quote! {
-                    #inner
-                    #[allow(unused)]
-                    type $token_type = #token_type_path;
-                }
-            };
-
-            let pattern = match (include_inner, v.is_unit) {
-                (_, true) => quote! { #enum_name::#variant_ident },
-                (false, false) => quote! { #enum_name::#variant_ident(_) },
-                (true, false) => quote! { #enum_name::#variant_ident($inner) },
-            };
-
-            let inner_decl = match (include_inner, v.is_unit) {
-                (false, _) | (true, false) => quote! {},
-                (true, true) => (!all_unit_variants)
-                    .then_some(quote! {
-                        #[allow(unused)]
-                        let $inner = #inner_type;
-                    })
-                    .unwrap_or_default(),
-            };
-            let dest_type_generic = dest_type_generic.then_some(quote!{
-                < $dest_type_generic >
-            }).unwrap_or_default();
-
-            let dest_type = include_dest
-                .then_some(quote! {
-                    #[allow(unused)]
-                    type $dest_type #dest_type_generic = <$dest_enum #dest_type_generic as #dtype_variant_path::EnumVariantDowncast<#token_type_path>>::Target;
-                })
-                .unwrap_or_default();
-
-            let dest_constraint = dest_constraint
-                .then_some(quote! {
-                    #[allow(unused)]
-                    type $dest_constraint #dest_type_generic = <$dest_enum #dest_type_generic as #dtype_variant_path::EnumVariantConstraint<#token_type_path>>::Constraint;
-                })
-                .unwrap_or_default();
-
-            quote! {
-                #pattern => {
-                    #inner_decl
-                    #type_declarations
-                    #dest_type
-                    #dest_constraint
-
-                    #[allow(unused_braces)]
-                    $body
-                }
+    let tokens_path = if use_token_path_crate_macro {
+        let mut rest_path = TokenStream2::new();
+        let num_segments = tokens_path.segments.len();
+        for (i, segment) in tokens_path.segments.iter().skip(1).enumerate() {
+            rest_path.extend(segment.to_token_stream());
+            // Only add :: if this is not the last segment
+            if i < num_segments - 2 {
+                rest_path.extend(quote! { :: });
             }
-        })
-    };
-
-    let generate_macro_arms = |include_inner: bool,
-                               src_type_generic: bool,
-                               include_dest: bool,
-                               dest_type_generic: bool,
-                               dest_constraint: bool| {
-        let tuple_variant_arms = generate_arms(
-            include_inner,
-            src_type_generic,
-            include_dest,
-            dest_type_generic,
-            dest_constraint,
-        );
-        let source_enum_type = if include_inner {
-            let src_type_generic = src_type_generic
-                .then_some(quote!(<$src_type_generic:tt>))
-                .unwrap_or_default();
-
-            quote! {
-                $enum_:ident<$src_type:ident #src_type_generic, $token_type:ident>
-            }
-        } else {
-            quote! {
-                $enum_:ident<$token_type:ident>
-            }
-        };
-
-        let macro_arm_inner = include_inner.then_some(quote!(($inner:ident))).unwrap_or_default();
-        let (dest_type_generic, dest_constraint_generic) = dest_type_generic
-            .then_some((
-                quote!(<$dest_type_generic:tt>),
-                quote!(<$dest_constraint_generic:tt>),
-            ))
-            .unwrap_or_default();
-
-        let dest_enum_type = match (include_dest, dest_constraint) {
-            (true, true) => quote! {
-                , $dest_enum:ident<$dest_type:ident #dest_type_generic, $dest_constraint:ident #dest_constraint_generic >
-            },
-            (true, false) => quote! {
-                , $dest_enum:ident<$dest_type:ident #dest_type_generic>
-            },
-            (false, _) => quote!(),
-        };
-
-        quote! {
-            ($value:expr, #source_enum_type #macro_arm_inner #dest_enum_type => $body:block) => {
-                match $value {
-                    #(#tuple_variant_arms)*
-                }
-            };
         }
-    };
-
-    if all_unit_variants {
-        let no_dest = generate_macro_arms(false, false, false, false, false);
-        let dest_no_generic_no_constraint = generate_macro_arms(false, false, true, false, false);
-        let dest_generic_no_constraint = generate_macro_arms(false, false, true, true, false);
-        let dest_no_generic_constraint = generate_macro_arms(false, false, true, false, true);
-        let dest_generic_constraint = generate_macro_arms(false, false, true, true, true);
-
-        // Generate the macro definition
-        quote! {
-                #[doc(hidden)]
-                #[macro_export]
-                macro_rules! #internal_matcher_name {
-                    #no_dest
-                    #dest_no_generic_no_constraint
-                    #dest_generic_no_constraint
-                    #dest_no_generic_constraint
-                    #dest_generic_constraint
-                }
-                pub use #internal_matcher_name as #matcher_name;
-        }
+        quote! { $crate :: #rest_path }
     } else {
-        let no_src__no_dest = generate_macro_arms(false, false, false, false, false);
-        let src_no_generic__no_dest = generate_macro_arms(true, false, false, false, false);
-        let src_generic__no_dest = generate_macro_arms(true, true, false, false, false);
+        quote! { #tokens_path }
+    };
 
-        let src_no_generic__dest_no_generic_no_constraint = generate_macro_arms(true, false, true, false, false);
-        let src_no_generic__dest_generic_no_constraint = generate_macro_arms(true, false, true, true, false);
-        let src_generic__dest_no_generic_no_constraint = generate_macro_arms(true, true, true, false, false);
-        let src_generic__dest_generic_no_constraint = generate_macro_arms(true, true, true, true, false);
-        let src_no_generic__dest_no_generic_constraint = generate_macro_arms(true, false, true, false, true);
-        let src_no_generic__dest_generic_constraint = generate_macro_arms(true, false, true, true, true);
-        let src_generic__dest_no_generic_constraint = generate_macro_arms(true, true, true, false, true);
-        let src_generic__dest_generic_constraint = generate_macro_arms(true, true, true, true, true);
+    let dtype_variant_path = if use_dtype_variant_path_crate_macro {
+        quote! { $crate }
+    } else {
+        quote! { #dtype_variant_path }
+    };
+    // --- End Path Generation Closures ---
 
-        let no_src__dest_no_generic_no_constraint = generate_macro_arms(false, false, true, false, false);
-        let no_src__dest_generic_no_constraint = generate_macro_arms(false, false, true, true, false);
-        let no_src__dest_no_generic_constraint = generate_macro_arms(false, false, true, false, true);
-        let no_src__dest_generic_constraint = generate_macro_arms(false, false, true, true, true);
+    let generate_macro_rule_arm = generate_macro_rule_arm(
+        enum_name,
+        parsed_variants,
+        tokens_path,
+        &dtype_variant_path,
+        None,
+    );
 
-        // Generate the macro definition
-        quote! {
-                #[doc(hidden)]
-                #[macro_export]
-                macro_rules! #internal_matcher_name {
-                    #no_src__no_dest
-                    #src_no_generic__no_dest
-                    #src_generic__no_dest
+    // Generate all combinations of macro arms (same logic as before, calling the new generate_macro_arms)
+    let macro_rule_arms = if all_unit_variants {
+        vec![
+            generate_macro_rule_arm(false, false, false, false, false),
+            generate_macro_rule_arm(false, false, true, false, false),
+            generate_macro_rule_arm(false, false, true, true, false),
+            generate_macro_rule_arm(false, false, true, false, true),
+            generate_macro_rule_arm(false, false, true, true, true),
+        ]
+    } else {
+        vec![
+            generate_macro_rule_arm(false, false, false, false, false),
+            generate_macro_rule_arm(true, false, false, false, false),
+            generate_macro_rule_arm(true, true, false, false, false),
+            // Dest Type variations
+            generate_macro_rule_arm(true, false, true, false, false),
+            generate_macro_rule_arm(true, false, true, true, false),
+            generate_macro_rule_arm(true, true, true, false, false),
+            generate_macro_rule_arm(true, true, true, true, false),
+            generate_macro_rule_arm(false, false, true, false, false),
+            generate_macro_rule_arm(false, false, true, true, false),
+            // Dest Constraint variations
+            generate_macro_rule_arm(true, false, true, false, true),
+            generate_macro_rule_arm(true, false, true, true, true),
+            generate_macro_rule_arm(true, true, true, false, true),
+            generate_macro_rule_arm(true, true, true, true, true),
+            generate_macro_rule_arm(false, false, true, false, true),
+            generate_macro_rule_arm(false, false, true, true, true),
+        ]
+    };
 
-                    #src_no_generic__dest_no_generic_no_constraint
-                    #src_no_generic__dest_generic_no_constraint
-                    #src_generic__dest_no_generic_no_constraint
-                    #src_generic__dest_generic_no_constraint
-                    #src_no_generic__dest_no_generic_constraint
-                    #src_no_generic__dest_generic_constraint
-                    #src_generic__dest_no_generic_constraint
-                    #src_generic__dest_generic_constraint
-
-                    #no_src__dest_no_generic_no_constraint
-                    #no_src__dest_generic_no_constraint
-                    #no_src__dest_no_generic_constraint
-                    #no_src__dest_generic_constraint
+    let macro_arms = macro_rule_arms
+        .into_iter()
+        .map(
+            |MacroRuleArm {
+                 pattern_prefix_fragment,
+                 pattern_suffix_fragment,
+                 variant_bodies,
+             }| {
+                quote! {
+                    ($value:expr, #pattern_prefix_fragment #pattern_suffix_fragment) => {
+                        match $value {
+                            #variant_bodies
+                        }
+                    };
                 }
-                pub use #internal_matcher_name as #matcher_name;
+            },
+        )
+        .collect::<Vec<_>>()
+        .into_iter()
+        .fold(TokenStream2::new(), |mut acc, arm| {
+            acc.extend(arm);
+            acc
+        });
+
+    // --- Final Macro Definition ---
+    quote! {
+            #[doc(hidden)]
+            #[macro_export]
+            macro_rules! #internal_matcher_name {
+                #macro_arms
+            }
+            #[allow(unused_imports)]
+            pub use #internal_matcher_name as #matcher_name;
+    }
+}
+
+/// Generates the grouped matcher macro if `grouped_matcher` is specified.
+/// **Uses `generate_match_arm_content`**. Does NOT reuse `generate_macro_arms`.
+/// Generates the grouped matcher macro if `grouped_matcher` is specified.
+/// **Uses `generate_match_arm_content`**. Does NOT reuse `generate_macro_arms`.
+fn generate_grouped_matcher_macro(
+    dtype_variant_path: &Path,
+    enum_name: &Ident,
+    _generics: &Generics, // Keep signature consistent
+    parsed_variants: &[ParsedVariantInfo],
+    parsed_grouped_matcher_opt: &Option<ParsedGroupedMatcher>,
+    tokens_path: &Path,
+) -> TokenStream2 {
+    let Some(parsed_grouped_matcher) = parsed_grouped_matcher_opt else {
+        return quote! {}; // No grouped matcher specified
+    };
+
+    let macro_name = &parsed_grouped_matcher.macro_name;
+    let groups = &parsed_grouped_matcher.groups;
+    let internal_macro_name = format_ident!("_{}", macro_name);
+
+    // Build maps for quick lookup: VariantIdent String -> VariantInfo and VariantIdent String -> Group Index
+    let mut variant_info_map: IndexMap<String, &ParsedVariantInfo> =
+        IndexMap::new();
+    let mut variant_to_group_index: IndexMap<String, usize> = IndexMap::new();
+    for (group_index, (_, group_variants)) in groups.iter().enumerate() {
+        for variant_ident in group_variants {
+            variant_to_group_index
+                .insert(variant_ident.to_string(), group_index);
         }
+    }
+    for v in parsed_variants {
+        variant_info_map.insert(v.variant_ident.to_string(), v);
+    }
+
+    // --- Path Generation Closures --- (Duplicated - consider extracting to a shared place if needed)
+    let use_token_path_crate_macro = tokens_path
+        .segments
+        .first()
+        .map(|seg| seg.ident == "crate")
+        .unwrap_or(false);
+    let use_dtype_variant_path_crate_macro = dtype_variant_path
+        .segments
+        .first()
+        .map(|seg| seg.ident == "crate")
+        .unwrap_or(false);
+
+    let tokens_path = if use_token_path_crate_macro {
+        let mut rest_path = TokenStream2::new();
+        let num_segments = tokens_path.segments.len();
+        for (i, segment) in tokens_path.segments.iter().skip(1).enumerate() {
+            rest_path.extend(segment.to_token_stream());
+            // Only add :: if this is not the last segment
+            if i < num_segments - 2 {
+                rest_path.extend(quote! { :: });
+            }
+        }
+        quote! { $crate :: #rest_path }
+    } else {
+        quote! { #tokens_path }
+    };
+
+    let dtype_variant_path = if use_dtype_variant_path_crate_macro {
+        quote! { $crate }
+    } else {
+        quote! { #dtype_variant_path }
+    };
+
+    // --- Define the Macro Rule ---
+    // Captures `macro!(value, [V1, V2] (inner) => { body0 }, [V3] => { body1 })`
+    let group_pattern_arms = groups
+        .iter()
+        .enumerate()
+        .map(|(group_index, (group_name, group_variants))| {
+            let group_variants: Vec<ParsedVariantInfo> = group_variants
+                .iter()
+                .map(|ident| variant_info_map[&ident.to_string()])
+                .cloned()
+                .collect();
+
+            let generate_macro_rule_arm = generate_macro_rule_arm(
+                enum_name,
+                &group_variants,
+                tokens_path.clone(),
+                &dtype_variant_path,
+                Some(group_index as _),
+            );
+
+            let all_unit_variants =
+                group_variants.iter().all(|info| info.is_unit);
+
+            // #(#group_variants,)*
+            let arm = if all_unit_variants {
+                generate_macro_rule_arm(false, false, false, false, false)
+            } else {
+                generate_macro_rule_arm(true, false, false, false, false)
+            };
+
+            (group_name, arm)
+        })
+        .collect::<Vec<_>>();
+
+    let group_match_pattern_fragment = {
+        let fragments = group_pattern_arms.iter().map(|(name, arm)| {
+            let prefix = &arm.pattern_prefix_fragment;
+            let suffix = &arm.pattern_suffix_fragment;
+            quote! {
+                #name : #prefix #suffix
+            }
+        });
+
+        quote! {
+            #(#fragments,)*
+        }
+    };
+
+    let all_bodies = {
+        let ts = group_pattern_arms
+            .iter()
+            .map(|(_, arm)| &arm.variant_bodies);
+
+        quote! {
+            #(#ts,)*
+        }
+    };
+
+    quote! {
+        #[doc(hidden)]
+        #[macro_export]
+        macro_rules! #internal_macro_name {
+            // Match the user's grouped input structure
+            ( $value:expr, #group_match_pattern_fragment ) => {
+                // Expand into the actual Rust match statement
+                match $value {
+                    #all_bodies // Expand the generated match arms here
+                }
+            };
+        }
+        #[allow(unused_imports)]
+        pub use #internal_macro_name as #macro_name;
     }
 }
