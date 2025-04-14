@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.7...dtype_variant-v0.0.8) - 2025-04-14
+
+### Other
+
+- Merge pull request #15 from Swoorup/sj_match_category
+- Make source type optional
+
 ## [0.0.7](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.6...dtype_variant-v0.0.7) - 2025-04-14
 
 ### Other

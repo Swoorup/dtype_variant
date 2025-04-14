@@ -4,15 +4,15 @@ members = ["dtype_variant", "dtype_variant_derive", "examples/*"]
 
 [workspace.package]
 authors = ["Swoorup Joshi <swoorupj@gmail.com>"]
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 license = "MIT"
 keywords = ["enum", "variant", "type-safety", "downcasting", "pattern-matching"]
 repository = "https://github.com/Swoorup/dtype_variant"
 
 [workspace.dependencies]
-dtype_variant = { path = "dtype_variant", version = "0.0.7" }
-dtype_variant_derive = { path = "dtype_variant_derive", version = "0.0.7" }
+dtype_variant = { path = "dtype_variant", version = "0.0.8" }
+dtype_variant_derive = { path = "dtype_variant_derive", version = "0.0.8" }
 
 darling = "0.20.11"
 indexmap = "2.9.0"
