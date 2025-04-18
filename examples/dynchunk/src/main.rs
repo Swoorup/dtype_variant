@@ -7,7 +7,7 @@ impl DPrim for i32 {}
 impl DPrim for f32 {}
 
 #[derive(DType, Clone, Debug)]
-#[dtype(tokens = "self", matcher = "match_dprimtype")]
+#[dtype(tokens_path = self, matcher = match_dprimtype)]
 enum DPrimType {
     I32,
     F32,
@@ -23,10 +23,10 @@ impl DPrimType {
 
 #[derive(DType, Clone, Debug)]
 #[dtype(
-    constraint = "DPrim",
-    tokens = "self",
-    container = "Vec",
-    matcher = "match_enum"
+    constraint = DPrim,
+    tokens_path = self,
+    container = Vec,
+    matcher = match_enum
 )]
 enum DynChunk {
     I32(Vec<i32>),
@@ -55,9 +55,9 @@ impl DynChunk {
 
 #[derive(DType, Clone, Debug)]
 #[dtype(
-    constraint = "DPrim",
-    tokens = "self",
-    matcher = "match_dyn_chunk_borrowed"
+    constraint = DPrim,
+    tokens_path = self,
+    matcher = match_dyn_chunk_borrowed
 )]
 enum DynChunkBorrowed<'a> {
     I32(&'a Vec<i32>),
