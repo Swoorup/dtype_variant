@@ -4,7 +4,7 @@ use darling::FromDeriveInput;
 use indexmap::{IndexMap, IndexSet};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens as _, format_ident, quote};
+use quote::{format_ident, quote};
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 use syn::{Data, Error, Generics, Ident, Path};
@@ -877,15 +877,10 @@ fn generate_matcher_method(
 
     let tokens_path = if use_token_path_crate_macro {
         let mut rest_path = TokenStream2::new();
-        let num_segments = tokens_path.segments.len();
-        for (i, segment) in tokens_path.segments.iter().skip(1).enumerate() {
-            rest_path.extend(segment.to_token_stream());
-            // Only add :: if this is not the last segment
-            if i < num_segments - 2 {
-                rest_path.extend(quote! { :: });
-            }
+        for segment in tokens_path.segments.iter().skip(1) {
+            rest_path.extend(quote!( :: #segment));
         }
-        quote! { $crate :: #rest_path }
+        quote! { $crate #rest_path }
     } else {
         quote! { #tokens_path }
     };
@@ -1027,15 +1022,10 @@ fn generate_grouped_matcher_macro(
 
     let tokens_path = if use_token_path_crate_macro {
         let mut rest_path = TokenStream2::new();
-        let num_segments = tokens_path.segments.len();
-        for (i, segment) in tokens_path.segments.iter().skip(1).enumerate() {
-            rest_path.extend(segment.to_token_stream());
-            // Only add :: if this is not the last segment
-            if i < num_segments - 2 {
-                rest_path.extend(quote! { :: });
-            }
+        for segment in tokens_path.segments.iter().skip(1) {
+            rest_path.extend(quote!( :: #segment));
         }
-        quote! { $crate :: #rest_path }
+        quote! { $crate #rest_path }
     } else {
         quote! { #tokens_path }
     };
