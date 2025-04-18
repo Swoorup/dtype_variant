@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.9...dtype_variant-v0.0.10) - 2025-04-18
+
+### Other
+
+- update dtype attribute syntax to use tokens_path for clarity
+
 ## [0.0.8](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.7...dtype_variant-v0.0.8) - 2025-04-14
 
 ### Other
