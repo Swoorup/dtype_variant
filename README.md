@@ -83,7 +83,7 @@ mod tokens {
 }
 
 #[derive(DType)]
-#[dtype(tokens = "tokens", container = "Vec")]
+#[dtype(tokens_path = tokens, container = Vec)]
 enum NumericData {
     Integer(Vec<i64>),
     Float(Vec<f64>),
@@ -117,7 +117,7 @@ The crate especially shines when you have multiple related enums that need to st
 
 ```rust
 #[derive(DType)]
-#[dtype(tokens = "tokens")]
+#[dtype(tokens_path = tokens)]
 enum NumericType {  // Type enum
     Integer,
     Float,
@@ -125,7 +125,7 @@ enum NumericType {  // Type enum
 }
 
 #[derive(DType)]
-#[dtype(tokens = "tokens")]
+#[dtype(tokens_path = tokens)]
 enum NumericStats {  // Stats enum
     Integer(MinMaxStats<i64>),
     Float(MinMaxStats<f64>),
@@ -133,7 +133,7 @@ enum NumericStats {  // Stats enum
 }
 
 #[derive(DType)]
-#[dtype(tokens = "tokens", container = "Vec")]
+#[dtype(tokens_path = tokens, container = Vec)]
 enum NumericData {  // Data enum
     Integer(Vec<i64>),
     Float(Vec<f64>),
@@ -165,10 +165,10 @@ mod tokens {
 
 #[derive(DType)]
 #[dtype(
-    tokens = "tokens",          // Required: Path to token types
-    container = "Vec",          // Optional: Container type for variants
-    constraint = "ToString",    // Optional: Trait constraint for variant types
-    matcher = "match_number"    // Optional: Name for the generated matcher macro
+    tokens_path = tokens,          // Required: Path to token types
+    container = Vec,          // Optional: Container type for variants
+    constraint = ToString,    // Optional: Trait constraint for variant types
+    matcher = match_number    // Optional: Name for the generated matcher macro
 )]
 enum Number {
     Float(Vec<f64>),
@@ -211,7 +211,7 @@ Optionally wrap variant data in container types:
 
 ```rust
 #[derive(DType)]
-#[dtype(tokens = "tokens", container = "Vec")]
+#[dtype(tokens_path = tokens, container = Vec)]
 enum Data {
     Numbers(Vec<i32>),
     Text(Vec<String>),
@@ -224,7 +224,7 @@ Enforce trait bounds on variant types:
 
 ```rust
 #[derive(DType)]
-#[dtype(tokens = "tokens", constraint = "std::fmt::Display")]
+#[dtype(tokens_path = tokens, constraint = std::fmt::Display)]
 enum Printable {
     Text(String),
     Number(i32),

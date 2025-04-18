@@ -30,9 +30,9 @@ mod tests {
 
     #[derive(Clone, Debug, Default, DType)]
     #[dtype(
-        matcher = "match_my_enum_variant",
-        tokens = "self",
-        constraint = "Constraint"
+        matcher = match_my_enum_variant,
+        tokens_path = self,
+        constraint = Constraint
     )]
     pub enum MyEnumVariant {
         U16,
@@ -43,9 +43,9 @@ mod tests {
 
     #[derive(Clone, Debug, DType, PartialEq, Eq)]
     #[dtype(
-        matcher = "match_my_enum",
-        tokens = "self",
-        constraint = "Constraint",
+        matcher = match_my_enum,
+        tokens_path = self,
+        constraint = Constraint,
         container = "Vec"
     )]
     enum MyEnum {
@@ -96,7 +96,7 @@ mod tests {
     build_dtype_tokens!([I32, F32]);
 
     #[derive(Clone, Debug, DType)]
-    #[dtype(matcher = "match_dyn_enum", tokens = "self")]
+    #[dtype(matcher = match_dyn_enum, tokens_path = self)]
     enum DynChunk {
         I32(i32),
         F32(f32),
@@ -147,7 +147,7 @@ mod tests {
 
     #[derive(DType)]
     #[dtype(
-        tokens = "self",
+        tokens_path = self,
         grouped_matcher = "match_my_enum_grouped, {
             Numeric: [A, B],
             UnitLike: [C, D]

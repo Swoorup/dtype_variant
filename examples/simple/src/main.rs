@@ -3,8 +3,8 @@ use dtype_variant_example_shared::variants::AttackVariant;
 
 #[derive(Clone, Debug, DType)]
 #[dtype(
-    matcher = "player_input_enum",
-    tokens = "dtype_variant_example_shared::variants"
+    matcher = player_input_enum,
+    tokens_path = dtype_variant_example_shared::variants
 )]
 pub enum PlayerInput {
     Move(String),
@@ -14,7 +14,7 @@ pub enum PlayerInput {
 #[derive(Clone, Debug, DType)]
 #[dtype(
     matcher = "ai_behavior_enum",
-    tokens = "dtype_variant_example_shared::variants"
+    tokens_path = dtype_variant_example_shared::variants
 )]
 pub enum AIBehavior {
     Attack(u32),
