@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.9...dtype_variant_derive-v0.0.10) - 2025-04-18
+
+### Other
+
+- Merge pull request #19 from Swoorup/sj-fix-crate-path
+- update dtype attribute syntax to use tokens_path for clarity
+
 ## [0.0.9](https://github.com/Swoorup/dtype_variant/compare/dtype_variant_derive-v0.0.8...dtype_variant_derive-v0.0.9) - 2025-04-18
 
 ### Other
