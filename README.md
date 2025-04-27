@@ -1,3 +1,4 @@
+
 # dtype_variant
 
 A Rust derive macro for creating type-safe enum variants with shared type tokens across multiple enums. This enables synchronized variant types and powerful downcasting capabilities between related enums.
@@ -9,8 +10,9 @@ A Rust derive macro for creating type-safe enum variants with shared type tokens
 - 🔒 Compile-time validation of variant types
 - 📦 Optional container type support (e.g., Vec, Box)
 - 🔍 Constraint trait implementation for variant types
-- 🎯 Flexible pattern matching through generated macros
+- 🎯 Powerful pattern matching through generated macros
 - 🛠️ Convenient From implementations for variant types
+- 🔀 Grouped variant matching for higher-level pattern recognition
 
 ## Why?
 
@@ -74,16 +76,13 @@ This approach has several problems:
 With `dtype_variant`, this becomes:
 
 ```rust
-use dtype_variant::DType;
+use dtype_variant::{DType, build_dtype_tokens};
 
-mod tokens {
-    pub struct IntegerVariant;
-    pub struct FloatVariant;
-    pub struct ComplexVariant;
-}
+// Generate token types for the variants
+build_dtype_tokens!([Integer, Float, Complex]);
 
 #[derive(DType)]
-#[dtype(tokens_path = tokens, container = Vec)]
+#[dtype(tokens_path = self, container = Vec)]
 enum NumericData {
     Integer(Vec<i64>),
     Float(Vec<f64>),
@@ -101,13 +100,13 @@ Now you get:
 ```rust
 fn process_data(data: &NumericData) {
     // Type-safe downcasting with zero boilerplate
-    if let Some(floats) = data.downcast_ref::<tokens::FloatVariant>() {
+    if let Some(floats) = data.downcast_ref::<FloatVariant>() {
         println!("Processing float data: {:?}", floats);
     }
 }
 
 // Or use the generated pattern matching macro
-match_numeric!(data, NumericData<T, Token>(values) => {
+match_numeric_data!(data, NumericData<T, Token>(values) => {
     println!("Processing {} data: {:?}",
              std::any::type_name::<T>(), values);
 });
@@ -116,8 +115,11 @@ match_numeric!(data, NumericData<T, Token>(values) => {
 The crate especially shines when you have multiple related enums that need to stay in sync:
 
 ```rust
+// Generate tokens for all variants
+build_dtype_tokens!([Integer, Float, Complex]);
+
 #[derive(DType)]
-#[dtype(tokens_path = tokens)]
+#[dtype(tokens_path = self)]
 enum NumericType {  // Type enum
     Integer,
     Float,
@@ -125,7 +127,7 @@ enum NumericType {  // Type enum
 }
 
 #[derive(DType)]
-#[dtype(tokens_path = tokens)]
+#[dtype(tokens_path = self)]
 enum NumericStats {  // Stats enum
     Integer(MinMaxStats<i64>),
     Float(MinMaxStats<f64>),
@@ -133,7 +135,7 @@ enum NumericStats {  // Stats enum
 }
 
 #[derive(DType)]
-#[dtype(tokens_path = tokens, container = Vec)]
+#[dtype(tokens_path = self, container = Vec)]
 enum NumericData {  // Data enum
     Integer(Vec<i64>),
     Float(Vec<f64>),
@@ -155,20 +157,17 @@ dtype_variant = "0.0.1"
 ## Usage
 
 ```rust
-use dtype_variant::DType;
+use dtype_variant::{DType, build_dtype_tokens};
 
-// First, define your token types (usually generated)
-mod tokens {
-    pub struct FloatVariant;
-    pub struct IntegerVariant;
-}
+// Generate token types with the macro
+build_dtype_tokens!([Float, Integer]);
 
 #[derive(DType)]
 #[dtype(
-    tokens_path = tokens,          // Required: Path to token types
-    container = Vec,          // Optional: Container type for variants
-    constraint = ToString,    // Optional: Trait constraint for variant types
-    matcher = match_number    // Optional: Name for the generated matcher macro
+    tokens_path = self,          // Use tokens in current scope
+    container = Vec,             // Optional: Container type for variants
+    constraint = ToString,       // Optional: Trait constraint for variant types
+    matcher = match_number       // Optional: Name for the generated matcher macro
 )]
 enum Number {
     Float(Vec<f64>),
@@ -179,7 +178,7 @@ fn main() {
     let num = Number::Float(vec![1.0, 2.0, 3.0]);
 
     // Type-safe downcasting
-    if let Some(floats) = num.downcast_ref::<tokens::FloatVariant>() {
+    if let Some(floats) = num.downcast_ref::<FloatVariant>() {
         println!("Found floats: {:?}", floats);
     }
 
@@ -200,9 +199,9 @@ Access variant data with compile-time type checking:
 let num = Number::Float(vec![1.0, 2.0]);
 
 // Safe downcasting methods
-let float_ref: Option<&Vec<f64>> = num.downcast_ref::<tokens::FloatVariant>();
-let float_mut: Option<&mut Vec<f64>> = num.downcast_mut::<tokens::FloatVariant>();
-let owned_float: Option<Vec<f64>> = num.downcast::<tokens::FloatVariant>();
+let float_ref: Option<&Vec<f64>> = num.downcast_ref::<FloatVariant>();
+let float_mut: Option<&mut Vec<f64>> = num.downcast_mut::<FloatVariant>();
+let owned_float: Option<Vec<f64>> = num.downcast::<FloatVariant>();
 ```
 
 ### Container Types
@@ -210,36 +209,96 @@ let owned_float: Option<Vec<f64>> = num.downcast::<tokens::FloatVariant>();
 Optionally wrap variant data in container types:
 
 ```rust
+build_dtype_tokens!([Numbers, Text]);
+
 #[derive(DType)]
-#[dtype(tokens_path = tokens, container = Vec)]
+#[dtype(tokens_path = self, container = Vec)]
 enum Data {
     Numbers(Vec<i32>),
     Text(Vec<String>),
 }
 ```
 
+### The Power of Generated Matcher Macros
+
+One of `dtype_variant`'s most powerful features is its generated matcher macros, which provide capabilities beyond standard Rust pattern matching:
+
+```rust
+build_dtype_tokens!([Int, Float, Str]);
+
+#[derive(DType)]
+#[dtype(tokens_path = self)]
+// Group variants by their logical category
+#[dtype_grouped_matcher(name = match_by_category, grouping = [
+    Numeric([Int, Float]),
+    Text([Str])
+])]
+// Group variants by their memory footprint
+#[dtype_grouped_matcher(name = match_by_size, grouping = [
+    Small([Int]),
+    Large([Float, Str])
+])]
+enum MyData {
+    Int(i32),
+    Float(f64),
+    Str(String),
+}
+
+// Access actual type parameters in patterns
+let data = MyData::Float(3.14);
+match_my_data!(data, MyData<T, Token>(value) => {
+    // This branch handles all variants
+    // T is inferred as f64, i32 or String, Token as FloatVariant or IntVariant or StrVariant
+    println!("Type: {}, Value: {}", std::any::type_name::<T>(), value);
+});
+
+// Match against logical groups of variants
+let result = match_by_category!(data, {
+    Numeric: MyData<T, Variant>(value) => {
+        // This branch handles BOTH Int and Float variants
+        // T is the actual type (either i32 or f64)
+        format!("Processing numeric value: {}", value)
+    },
+    Text: MyData<T, Variant>(value) => {
+        format!("Processing text: {}", value)
+    }
+});
+
+// Or match by size characteristics
+let size_class = match_by_size!(data, {
+    Small: MyData<T, Variant>(_) => "Small data type",
+    Large: MyData<T, Variant>(_) => "Large data type",
+});
+```
+
+These matcher macros provide:
+
+1. **Type Parameters in Patterns**: Access to the actual types of each variant
+2. **Grouped Variant Matching**: Handle sets of variants together by logical categories
+3. **Token Types in Patterns**: Full access to both the data type and token type
+4. **Automatic Container Handling**: Seamless handling of container types
+
 ### Trait Constraints
 
 Enforce trait bounds on variant types:
 
 ```rust
+build_dtype_tokens!([Float, Integer]);
+
 #[derive(DType)]
-#[dtype(tokens_path = tokens, constraint = std::fmt::Display)]
-enum Printable {
-    Text(String),
-    Number(i32),
+#[dtype(tokens_path = self, constraint = Display)]
+enum FormattableNumber {
+    Float(f64),
+    Integer(i32),
 }
-```
 
-### Pattern Matching
-
-Generate ergonomic pattern matching macros:
-
-```rust
-match_data!(value, Data<T, Token>(inner) => {
-    println!("Got value of type {} with data: {:?}",
-             std::any::type_name::<T>(), inner);
-});
+// The constraint ensures all variant types implement Display
+fn format_number(num: &FormattableNumber) -> String {
+    match_formattable_number!(num, FormattableNumber<T, Token>(value) => {
+        // We can now safely call .to_string() on any variant's value
+        format!("Formatted number: {}", value.to_string())
+    })
+}
 ```
 
 ## License
