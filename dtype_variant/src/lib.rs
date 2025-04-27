@@ -143,45 +143,62 @@ mod tests {
         });
     }
 
-    build_dtype_tokens!([A, B, C, D]);
+    build_dtype_tokens!([Int, Float, Str]); // Add tokens for MyData
 
-    #[derive(DType)]
-    #[dtype(
-        tokens_path = self,
-        grouped_matcher = "match_my_enum_grouped, {
-            Numeric: [A, B],
-            UnitLike: [C, D]
-        }",
-        skip_from_impls = true
-    )]
+    #[derive(DType, Debug, Clone, PartialEq)]
+    #[dtype(tokens_path = self)] // skip_from_impls is false by default
+    #[dtype_grouped_matcher(name = match_by_category, grouping = [
+        Numeric([Int, Float]),
+        Text([Str])
+    ])]
+    #[dtype_grouped_matcher(name = match_by_size, grouping = [Small([Int]), Large([Float, Str])])]
     #[allow(dead_code)]
-    enum MyEnum2 {
-        A(u32),
-        B(u64),
-        C,
-        D,
+    enum MyData {
+        Int(i32),
+        Float(f64),
+        Str(String),
     }
 
     #[test]
-    fn test_match_grouped() {
-        let str_a = match_my_enum_grouped!(MyEnum2::A(42),
-            Numeric:MyEnum2<Variant>(inner) => {
-                format!("Integer variant: {}", inner)
-            },
-            UnitLike:MyEnum2<Variant> => {
-                "C, D variant".to_string()
-            },
-        );
-        let str_c = match_my_enum_grouped!(MyEnum2::C,
-            Numeric:MyEnum2<T, Variant>(inner) => {
-                format!("Integer variant: {}", inner)
-            },
-            UnitLike:MyEnum2<Variant> => {
-                "C, D variant".to_string()
-            },
-        );
+    fn test_grouped_matchers_mydata() {
+        let int_val = MyData::Int(42);
+        let float_val = MyData::Float(3.14);
+        let str_val = MyData::Str("hello".to_string());
 
-        assert_eq!(str_a, "Integer variant: 42");
-        assert_eq!(str_c, "C, D variant");
+        // Test match_by_category
+        let category_int = match_by_category!(int_val.clone(), {
+            Numeric: MyData<T, Variant>(inner) => { format!("Numeric: {}", inner) },
+            Text: MyData<T, Variant>(inner) => { format!("Text: {}", inner) },
+        });
+        let category_float = match_by_category!(float_val.clone(), {
+            Numeric: MyData<T, Variant>(inner) => { format!("Numeric: {}", inner) },
+            Text: MyData<T, Variant>(inner) => { format!("Text: {}", inner) },
+        });
+        let category_str = match_by_category!(str_val.clone(), { // Clone str_val as match consumes
+            Numeric: MyData<T, Variant>(inner) => { format!("Numeric: {}", inner) },
+            Text: MyData<T, Variant>(inner) => { format!("Text: {}", inner) },
+        });
+
+        assert_eq!(category_int, "Numeric: 42");
+        assert_eq!(category_float, "Numeric: 3.14");
+        assert_eq!(category_str, "Text: hello");
+
+        // Test match_by_size
+        let size_int = match_by_size!(&int_val, { // Use reference
+            Small: MyData<T, Variant>(_inner) => { "Small" },
+            Large: MyData<T, Variant>(_inner) => { "Large" },
+        });
+        let size_float = match_by_size!(&float_val, {
+            Small: MyData<T, Variant>(_inner) => { "Small" },
+            Large: MyData<T, Variant>(_inner) => { "Large" },
+        });
+        let size_str = match_by_size!(&str_val, {
+            Small: MyData<T, Variant>(_inner) => { "Small" },
+            Large: MyData<T, Variant>(_inner) => { "Large" },
+        });
+
+        assert_eq!(size_int, "Small");
+        assert_eq!(size_float, "Large");
+        assert_eq!(size_str, "Large");
     }
 }

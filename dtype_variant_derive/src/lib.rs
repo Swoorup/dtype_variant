@@ -3,6 +3,7 @@ use quote::{format_ident, quote};
 use syn::{Ident, Token, parse_macro_input, punctuated::Punctuated};
 
 mod derive;
+mod grouped_matcher;
 mod matcher_gen;
 
 pub(crate) fn dtype_variant_path() -> syn::Path {
@@ -16,7 +17,7 @@ pub(crate) fn dtype_variant_path() -> syn::Path {
     }
 }
 
-#[proc_macro_derive(DType, attributes(dtype))]
+#[proc_macro_derive(DType, attributes(dtype, dtype_grouped_matcher))]
 pub fn dtype_derive(input: TokenStream) -> TokenStream {
     derive::dtype_derive_impl(input)
 }
