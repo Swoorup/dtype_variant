@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.10...dtype_variant-v0.0.11) - 2025-04-27
+
+### Other
+
+- Allow multiple grouped matcher generation
+
 ## [0.0.10](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.9...dtype_variant-v0.0.10) - 2025-04-18
 
 ### Other
