@@ -12,7 +12,7 @@ A Rust derive macro for creating type-safe enum variants with shared type tokens
 - 🔍 Constraint trait implementation for variant types
 - 🎯 Powerful pattern matching through generated macros
 - 🛠️ Convenient From implementations for variant types
-- 🔀 Grouped variant matching for higher-level pattern recognition
+- 🔀 Grouped variant matching for matching related variants.
 
 ## Why?
 
