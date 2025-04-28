@@ -1,4 +1,3 @@
-
 # dtype_variant
 
 A Rust derive macro for creating type-safe enum variants with shared type tokens across multiple enums. This enables synchronized variant types and powerful downcasting capabilities between related enums.
@@ -230,13 +229,13 @@ build_dtype_tokens!([Int, Float, Str]);
 #[dtype(tokens_path = self)]
 // Group variants by their logical category
 #[dtype_grouped_matcher(name = match_by_category, grouping = [
-    Numeric([Int, Float]),
-    Text([Str])
+    Numeric(Int | Float),
+    Text(Str)
 ])]
 // Group variants by their memory footprint
 #[dtype_grouped_matcher(name = match_by_size, grouping = [
-    Small([Int]),
-    Large([Float, Str])
+    Small(Int),
+    Large(Float | Str)
 ])]
 enum MyData {
     Int(i32),
@@ -312,3 +311,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Acknowledgements
 
 This project was inspired by [dtype_dispatch](https://github.com/pcodec/pcodec/tree/main/dtype_dispatch), which provides similar enum variant type dispatch functionality.
+
+## Roadmap
+
+- Add constraint support to the `grouped_matcher` argument for enforcing trait bounds on grouped variants.

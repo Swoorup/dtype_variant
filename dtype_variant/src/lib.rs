@@ -148,10 +148,10 @@ mod tests {
     #[derive(DType, Debug, Clone, PartialEq)]
     #[dtype(tokens_path = self)] // skip_from_impls is false by default
     #[dtype_grouped_matcher(name = match_by_category, grouping = [
-        Numeric([Int, Float]),
-        Text([Str])
+        Numeric(Int | Float),
+        Text(Str)
     ])]
-    #[dtype_grouped_matcher(name = match_by_size, grouping = [Small([Int]), Large([Float, Str])])]
+    #[dtype_grouped_matcher(name = match_by_size, grouping = [Small(Int), Large(Float | Str)])]
     #[allow(dead_code)]
     enum MyData {
         Int(i32),

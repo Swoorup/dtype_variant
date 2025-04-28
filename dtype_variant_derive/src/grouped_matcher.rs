@@ -55,44 +55,49 @@ impl FromMeta for ParsedGroups {
                         _ => return Err(Error::custom("Expected group name identifier").with_span(&*call.func))
                     };
 
-                    // Ensure there's exactly one argument (the variant array)
+                    // Ensure there's exactly one argument (the variant expression)
                     if call.args.len() != 1 {
                         return Err(Error::custom(
-                            format!("Group `{}` expects exactly one argument (a list of variants in brackets `[...]`)", group_name)
+                            format!("Group `{}` expects exactly one argument (a list of variants separated by `|`)", group_name)
                         ).with_span(&call.args));
                     }
 
-                    // Extract the variants array
-                    let variants_array = match &call.args[0] {
-                        syn::Expr::Array(array) => array,
-                        _ => return Err(Error::custom(
-                            "Expected variant list in brackets `[...]`"
-                        ).with_span(&call.args))
-                    };
-
-                    // Extract each variant identifier
+                    // Extract the variants separated by `|`
+                    let variants_expr = &call.args[0];
                     let mut variants = Vec::new();
-                    for variant_expr in &variants_array.elems {
-                        let variant = match variant_expr {
-                            syn::Expr::Path(path) => path.path.get_ident().cloned().ok_or_else(||
-                                Error::custom("Expected variant identifier").with_span(variant_expr)
-                            )?,
-                            _ => return Err(Error::unexpected_expr_type(variant_expr).with_span(variant_expr))
-                        };
-                        variants.push(variant);
+
+                    fn extract_variants(expr: &syn::Expr, variants: &mut Vec<Ident>) -> darling::Result<()> {
+                        match expr {
+                            syn::Expr::Binary(binary) if matches!(binary.op, syn::BinOp::BitOr(_)) => {
+                                // Correctly handle `|` as a binary operator for separating variants
+                                extract_variants(&binary.left, variants)?;
+                                extract_variants(&binary.right, variants)?;
+                            }
+                            syn::Expr::Path(path) => {
+                                variants.push(path.path.get_ident().cloned().ok_or_else(||
+                                    Error::custom("Expected variant identifier").with_span(path)
+                                )?);
+                            }
+                            _ => return Err(Error::custom(
+                                "Expected variants separated by `|` or a single variant identifier"
+                            ).with_span(expr)),
+                        }
+                        Ok(())
                     }
+
+                    extract_variants(variants_expr, &mut variants)?;
 
                     // Ensure the variant list is not empty
                     if variants.is_empty() {
                         return Err(Error::custom(
                             "Group variant list cannot be empty"
-                        ).with_span(variants_array));
+                        ).with_span(variants_expr));
                     }
 
                     groups.push((group_name, variants));
                 },
                 _ => return Err(Error::custom(
-                    "Expected group definition in the format `GroupName([Variant, ...])`"
+                    "Expected group definition in the format `GroupName(Variant | ...)`"
                 ).with_span(elem))
             }
         }
