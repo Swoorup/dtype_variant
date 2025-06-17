@@ -87,7 +87,7 @@ struct DTypeMacroArgs {
 }
 
 /// Comprehensive information about a parsed enum variant.
-/// 
+///
 /// This structure contains all the metadata and generated code needed for a single
 /// enum variant, including struct definitions for struct variants and type information
 /// for all variant types.
@@ -128,20 +128,20 @@ pub struct ParsedVariantInfo {
 //============================================================================
 
 /// Main implementation of the DType derive macro.
-/// 
+///
 /// This function processes the input enum and generates all necessary code for:
 /// - Variant token types (either locally or using shared tokens)
 /// - Struct definitions for struct variants
 /// - Downcast trait implementations (owned, reference, and mutable reference)
 /// - From trait implementations
 /// - Pattern matching macros (regular and grouped)
-/// 
+///
 /// # Arguments
 /// * `input` - TokenStream from the derive macro containing the enum definition
-/// 
+///
 /// # Returns
 /// * TokenStream containing all generated code
-/// 
+///
 /// # Errors
 /// Returns compilation errors for:
 /// - Non-enum types
@@ -167,8 +167,8 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
             return Error::new_spanned(
                 &main_args.ident,
                 create_error_message(
-                    "DType derive macro validation", 
-                    "can only be used on `enum` types"
+                    "DType derive macro validation",
+                    "can only be used on `enum` types",
                 ),
             )
             .to_compile_error()
@@ -189,7 +189,8 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     };
 
     // Determine tokens path - use shared_variant_zst_path if specified, otherwise generate locally
-    let (tokens_path, generate_local_tokens) = match shared_variant_zst_path_opt {
+    let (tokens_path, generate_local_tokens) = match shared_variant_zst_path_opt
+    {
         Some(path) => (path, false),
         None => {
             // Generate tokens locally - use the current module path
@@ -199,10 +200,12 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     };
 
     // Parse enum variants and extract necessary information
-    let parsed_variants = match parse_variants(enum_data, &container_ident_opt, &main_args.ident) {
-        Ok(variants) => variants,
-        Err(e) => return e.to_compile_error().into(),
-    };
+    let parsed_variants =
+        match parse_variants(enum_data, &container_ident_opt, &main_args.ident)
+        {
+            Ok(variants) => variants,
+            Err(e) => return e.to_compile_error().into(),
+        };
 
     // Parse #[dtype_grouped_matcher] attributes using darling
     let mut parsed_grouped_matchers = Vec::new();
@@ -230,7 +233,8 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
             Err(e) => {
                 // Use standardized error handling
                 let syn_error = darling_error_to_syn(e);
-                attr_parse_errors = Some(combine_errors(attr_parse_errors, syn_error));
+                attr_parse_errors =
+                    Some(combine_errors(attr_parse_errors, syn_error));
             }
         }
     }
@@ -243,7 +247,9 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     // Validate parsed grouped matchers
     let mut validation_errors: Option<Error> = None;
     for parsed_matcher in &parsed_grouped_matchers {
-        if let Err(e) = validate_grouped_matcher(parsed_matcher, &parsed_variants) {
+        if let Err(e) =
+            validate_grouped_matcher(parsed_matcher, &parsed_variants)
+        {
             validation_errors = Some(combine_errors(validation_errors, e));
         }
     }
@@ -257,7 +263,8 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
 
     // Generate the different code blocks using helper functions.
     let struct_definitions = generate_struct_definitions(&parsed_variants);
-    let struct_from_conversions = generate_struct_from_conversions(&parsed_variants, enum_name);
+    let struct_from_conversions =
+        generate_struct_from_conversions(&parsed_variants, enum_name);
     let local_token_definitions = if generate_local_tokens {
         generate_local_token_definitions(&parsed_variants)
     } else {
@@ -375,7 +382,8 @@ struct ParsedPaths {
 }
 
 fn parse_config_paths(args: &DTypeMacroArgs) -> Result<ParsedPaths, Error> {
-    let shared_variant_zst_path: Option<Path> = args.shared_variant_zst_path.clone();
+    let shared_variant_zst_path: Option<Path> =
+        args.shared_variant_zst_path.clone();
     let container_ident: Option<Ident> = args.container.clone();
     let constraint_path: Option<Expr> = args.constraint.clone();
     let matcher_ident: Option<Ident> = args.matcher.clone();
@@ -462,10 +470,11 @@ fn parse_variants(
                     variant_ident,
                     span = variant_ident.span()
                 );
-                
+
                 // Store the field information for later use
-                let fields_vec: Vec<Field> = named_fields.named.iter().cloned().collect();
-                
+                let fields_vec: Vec<Field> =
+                    named_fields.named.iter().cloned().collect();
+
                 let field_defs = named_fields.named.iter().map(|field| {
                     let field_name = &field.ident;
                     let field_type = &field.ty;
@@ -512,9 +521,12 @@ fn parse_variants(
 
                 // The struct type becomes both full_field_type and inner_type
                 let struct_type: Type = syn::parse_quote!(#struct_ident);
-                let struct_ref_type: Type = syn::parse_quote!(#struct_ref_ident);
-                let struct_mut_type: Type = syn::parse_quote!(#struct_mut_ident);
-                let full_field_type = if let Some(_container) = container_ident {
+                let struct_ref_type: Type =
+                    syn::parse_quote!(#struct_ref_ident);
+                let struct_mut_type: Type =
+                    syn::parse_quote!(#struct_mut_ident);
+                let full_field_type = if let Some(_container) = container_ident
+                {
                     // If container is specified, we would wrap it, but struct variants
                     // don't typically use containers. For now, treat as direct.
                     struct_type.clone()
@@ -542,7 +554,7 @@ fn parse_variants(
                     &variant.fields,
                     create_error_message(
                         "Tuple variant validation",
-                        "only supports tuple variants with exactly one field"
+                        "only supports tuple variants with exactly one field",
                     ),
                 ));
             }
@@ -779,23 +791,23 @@ fn generate_struct_from_conversions(
             let struct_ident = format_ident!("{}{}Fields", enum_name, variant_ident);
             let struct_ref_ident = format_ident!("{}{}Ref", enum_name, variant_ident);
             let struct_mut_ident = format_ident!("{}{}Mut", enum_name, variant_ident);
-            
+
             let fields = v.struct_fields.as_ref().unwrap();
-            
+
             // Generate field conversions for Ref -> Fields
             let ref_field_conversions: Vec<_> = fields.iter().map(|field| {
                 let field_name = field.ident.as_ref().unwrap();
                 // Clone from reference - compiler optimizes Copy types automatically
                 quote! { #field_name: src.#field_name.clone() }
             }).collect();
-            
+
             // Generate field conversions for Mut -> Fields  
             let mut_field_conversions: Vec<_> = fields.iter().map(|field| {
                 let field_name = field.ident.as_ref().unwrap();
                 // Clone from reference - compiler optimizes Copy types automatically
                 quote! { #field_name: src.#field_name.clone() }
             }).collect();
-            
+
             // The consuming conversions still need to dereference since Ref/Mut structs contain references
 
             quote! {
@@ -912,13 +924,12 @@ fn generate_enum_variant_downcast(
                 let struct_ident = format_ident!("{}{}Fields", enum_name, variant_ident);
                 let struct_ref_ident = format_ident!("{}{}Ref", enum_name, variant_ident);
                 let struct_mut_ident = format_ident!("{}{}Mut", enum_name, variant_ident);
-                
                 // Generate field patterns and bindings
                 let field_patterns: Vec<_> = fields.iter().map(|f| {
                     let field_name = f.ident.as_ref().unwrap();
                     quote! { #field_name }
                 }).collect();
-                
+
                 let field_constructions: Vec<_> = fields.iter().map(|f| {
                     let field_name = f.ident.as_ref().unwrap();
                     quote! { #field_name: #field_name.clone() }
@@ -933,7 +944,7 @@ fn generate_enum_variant_downcast(
                     let field_name = f.ident.as_ref().unwrap();
                     quote! { #field_name: #field_name }
                 }).collect();
-                
+
                 (
                     // For reference downcasting, create reference wrapper struct
                     quote! {
@@ -978,7 +989,6 @@ fn generate_enum_variant_downcast(
             // For struct variants, use the reference wrapper types
             let ref_target_type = v.ref_type.as_ref().unwrap();
             let mut_target_type = v.mut_type.as_ref().unwrap();
-            
             quote! {
                 // Implement the #dtype_variant_path::EnumVariantDowncast trait for owned downcasting
                 impl #impl_generics #dtype_variant_path::EnumVariantDowncast<#tokens_path::#token_ident>
@@ -1070,11 +1080,10 @@ fn generate_enum_variant_downcast(
         })
     });
 
-    quote! { 
-        #(#downcast_impls)* 
+    quote! {
+        #(#downcast_impls)*
     }
 }
-
 
 /// Generates `impl #dtype_variant_path::EnumVariantConstraint<...>` blocks if `constraint` is specified.
 fn generate_enum_variant_constraint(
@@ -1148,12 +1157,10 @@ fn generate_from_impls(
             // For struct variants, generate From<GeneratedStruct> -> EnumName
             // The from implementation needs to destructure the struct and construct the enum variant
             if let Some(fields) = &v.struct_fields {
-                
                 let field_constructions: Vec<_> = fields.iter().map(|f| {
                     let field_name = f.ident.as_ref().unwrap();
                     quote! { #field_name: value.#field_name }
                 }).collect();
-                
                 Some(quote! {
                     impl #impl_generics From<#full_field_type> for #enum_name #ty_generics #where_clause {
                         fn from(value: #full_field_type) -> Self {
@@ -1301,7 +1308,8 @@ fn generate_matcher_method(
     let internal_matcher_name = format_ident!("_{}", matcher_name);
 
     // Generate macro-compatible paths
-    let (tokens_path, dtype_variant_path) = generate_macro_compatible_paths(tokens_path, dtype_variant_path);
+    let (tokens_path, dtype_variant_path) =
+        generate_macro_compatible_paths(tokens_path, dtype_variant_path);
 
     let generate_macro_rule_arm = generate_macro_rule_arm(
         enum_name,
@@ -1416,7 +1424,8 @@ fn generate_grouped_matcher_macro(
     }
 
     // Generate macro-compatible paths
-    let (tokens_path, dtype_variant_path) = generate_macro_compatible_paths(tokens_path, dtype_variant_path);
+    let (tokens_path, dtype_variant_path) =
+        generate_macro_compatible_paths(tokens_path, dtype_variant_path);
 
     // --- Define the Macro Rule ---
     let create_group_macro_arm = |include_src_ty: bool| {

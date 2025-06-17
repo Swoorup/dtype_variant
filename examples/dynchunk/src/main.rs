@@ -79,7 +79,6 @@ impl<'a> DynChunkBorrowed<'a> {
     }
 }
 
-
 fn main() {
     // Create and add DynChunks
     let chunk1 = DynChunk::from(vec![1, 2, 3]);
