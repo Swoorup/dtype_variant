@@ -262,7 +262,7 @@ mod tests {
         }
         
         // Test From implementations with struct types
-        let person_struct = PersonFields { name: "Bob".to_string(), age: 25 };
+        let person_struct = StructVariantDataPersonFields { name: "Bob".to_string(), age: 25 };
         let data_from_struct = StructVariantData::from(person_struct);
         
         if let StructVariantData::Person { name, age } = data_from_struct {
@@ -423,24 +423,70 @@ mod tests {
             age: 30,
         };
 
-        // Test that downcast_ref returns PersonRef<'_>
-        let person_ref: Option<PersonRef<'_>> = person_data.downcast_ref::<PersonVariant>();
+        // Test that downcast_ref returns StructVariantDataPersonRef<'_>
+        let person_ref: Option<StructVariantDataPersonRef<'_>> = person_data.downcast_ref::<PersonVariant>();
         assert!(person_ref.is_some());
         let person_ref = person_ref.unwrap();
         assert_eq!(person_ref.name, "Alice");
         assert_eq!(*person_ref.age, 30);
 
-        // Test that downcast_mut returns PersonMut<'_>
+        // Test that downcast_mut returns StructVariantDataPersonMut<'_>
         let mut person_data_mut = StructVariantData::Person {
             name: "Bob".to_string(),
             age: 25,
         };
-        let person_mut: Option<PersonMut<'_>> = person_data_mut.downcast_mut::<PersonVariant>();
+        let person_mut: Option<StructVariantDataPersonMut<'_>> = person_data_mut.downcast_mut::<PersonVariant>();
         assert!(person_mut.is_some());
         let person_mut = person_mut.unwrap();
         assert_eq!(person_mut.name, "Bob");
         *person_mut.age = 26; // Demonstrate mutable access
         assert_eq!(*person_mut.age, 26);
+    }
+
+    #[test]
+    fn test_struct_from_conversions() {
+        // Test From conversions for struct reference types
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        
+        // Test Ref -> Fields conversion
+        if let Some(person_ref) = person_data.downcast_ref::<PersonVariant>() {
+            let person_fields: StructVariantDataPersonFields = person_ref.into();
+            assert_eq!(person_fields.name, "Alice");
+            assert_eq!(person_fields.age, 30);
+        } else {
+            panic!("Failed to downcast to PersonRef");
+        }
+        
+        // Test Mut -> Fields conversion
+        let mut person_data_mut = StructVariantData::Person {
+            name: "Bob".to_string(),
+            age: 25,
+        };
+        
+        if let Some(person_mut) = person_data_mut.downcast_mut::<PersonVariant>() {
+            let person_fields: StructVariantDataPersonFields = person_mut.into();
+            assert_eq!(person_fields.name, "Bob");
+            assert_eq!(person_fields.age, 25);
+        } else {
+            panic!("Failed to downcast to PersonMut");
+        }
+        
+        // Test reference-to-reference conversion
+        let location_data = StructVariantData::Location {
+            lat: 37.7749,
+            lng: -122.4194,
+        };
+        
+        if let Some(location_ref) = location_data.downcast_ref::<LocationVariant>() {
+            let location_fields: StructVariantDataLocationFields = (&location_ref).into();
+            assert_eq!(location_fields.lat, 37.7749);
+            assert_eq!(location_fields.lng, -122.4194);
+        } else {
+            panic!("Failed to downcast to LocationRef");
+        }
     }
 
     #[test]

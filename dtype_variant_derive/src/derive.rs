@@ -135,7 +135,7 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     };
 
     // Parse enum variants and extract necessary info.
-    let variant_parse_result = parse_variants(enum_data, &container_ident_opt);
+    let variant_parse_result = parse_variants(enum_data, &container_ident_opt, &main_args.ident);
     let parsed_variants = match variant_parse_result {
         Ok(variants) => variants,
         Err(e) => return e.to_compile_error().into(),
@@ -204,6 +204,7 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
 
     // Generate the different code blocks using helper functions.
     let struct_definitions = generate_struct_definitions(&parsed_variants);
+    let struct_from_conversions = generate_struct_from_conversions(&parsed_variants, enum_name);
     let local_token_definitions = if generate_local_tokens {
         generate_local_token_definitions(&parsed_variants)
     } else {
@@ -278,6 +279,9 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         // Generated struct definitions for struct variants.
         #struct_definitions
 
+        // Generated From conversions for struct reference types.
+        #struct_from_conversions
+
         // Compile-time validation of shared variant ZST token existence.
         #token_validation_code
 
@@ -334,6 +338,7 @@ fn parse_config_paths(args: &DTypeMacroArgs) -> Result<ParsedPaths, Error> {
 fn parse_variants(
     enum_data: &DataEnum,
     container_ident: &Option<Ident>,
+    enum_name: &Ident,
 ) -> Result<Vec<ParsedVariantInfo>, Error> {
     let mut variants_info = Vec::new();
 
@@ -387,17 +392,20 @@ fn parse_variants(
             Fields::Named(named_fields) => {
                 // Handle struct variants - generate struct types for the fields
                 let struct_ident = format_ident!(
-                    "{}Fields",
+                    "{}{}Fields",
+                    enum_name,
                     variant_ident,
                     span = variant_ident.span()
                 );
                 let struct_ref_ident = format_ident!(
-                    "{}Ref",
+                    "{}{}Ref",
+                    enum_name,
                     variant_ident,
                     span = variant_ident.span()
                 );
                 let struct_mut_ident = format_ident!(
-                    "{}Mut",
+                    "{}{}Mut",
+                    enum_name,
                     variant_ident,
                     span = variant_ident.span()
                 );
@@ -668,6 +676,78 @@ fn generate_struct_definitions(
     }
 }
 
+/// Generates From conversions for struct reference types to owned field structs.
+fn generate_struct_from_conversions(
+    parsed_variants: &[ParsedVariantInfo],
+    enum_name: &Ident,
+) -> TokenStream2 {
+    let from_impls = parsed_variants
+        .iter()
+        .filter(|v| v.is_struct && v.struct_fields.is_some())
+        .map(|v| {
+            let variant_ident = &v.variant_ident;
+            let struct_ident = format_ident!("{}{}Fields", enum_name, variant_ident);
+            let struct_ref_ident = format_ident!("{}{}Ref", enum_name, variant_ident);
+            let struct_mut_ident = format_ident!("{}{}Mut", enum_name, variant_ident);
+            
+            let fields = v.struct_fields.as_ref().unwrap();
+            
+            // Generate field conversions for Ref -> Fields
+            let ref_field_conversions: Vec<_> = fields.iter().map(|field| {
+                let field_name = field.ident.as_ref().unwrap();
+                quote! { #field_name: (*src.#field_name).clone() }
+            }).collect();
+            
+            // Generate field conversions for Mut -> Fields  
+            let mut_field_conversions: Vec<_> = fields.iter().map(|field| {
+                let field_name = field.ident.as_ref().unwrap();
+                quote! { #field_name: (*src.#field_name).clone() }
+            }).collect();
+
+            quote! {
+                // From conversion for Ref types
+                impl<'target> From<&'target #struct_ref_ident<'target>> for #struct_ident {
+                    fn from(src: &'target #struct_ref_ident<'target>) -> Self {
+                        Self {
+                            #(#ref_field_conversions),*
+                        }
+                    }
+                }
+
+                // From conversion for Mut types
+                impl<'target> From<&'target #struct_mut_ident<'target>> for #struct_ident {
+                    fn from(src: &'target #struct_mut_ident<'target>) -> Self {
+                        Self {
+                            #(#mut_field_conversions),*
+                        }
+                    }
+                }
+
+                // Direct From conversion for Ref types (consuming)
+                impl<'target> From<#struct_ref_ident<'target>> for #struct_ident {
+                    fn from(src: #struct_ref_ident<'target>) -> Self {
+                        Self {
+                            #(#ref_field_conversions),*
+                        }
+                    }
+                }
+
+                // Direct From conversion for Mut types (consuming)
+                impl<'target> From<#struct_mut_ident<'target>> for #struct_ident {
+                    fn from(src: #struct_mut_ident<'target>) -> Self {
+                        Self {
+                            #(#mut_field_conversions),*
+                        }
+                    }
+                }
+            }
+        });
+
+    quote! {
+        #(#from_impls)*
+    }
+}
+
 /// Generates compile-time checks for shared token existence when using shared_variant_zst_path.
 fn generate_token_validation(
     tokens_path: &Path,
@@ -735,9 +815,9 @@ fn generate_enum_variant_downcast(
         let (ref_return, mut_return, owned_return) = if v.is_struct {
             // For struct variants, we need to extract fields and construct the generated struct
             if let Some(fields) = &v.struct_fields {
-                let struct_ident = format_ident!("{}Fields", variant_ident);
-                let struct_ref_ident = format_ident!("{}Ref", variant_ident);
-                let struct_mut_ident = format_ident!("{}Mut", variant_ident);
+                let struct_ident = format_ident!("{}{}Fields", enum_name, variant_ident);
+                let struct_ref_ident = format_ident!("{}{}Ref", enum_name, variant_ident);
+                let struct_mut_ident = format_ident!("{}{}Mut", enum_name, variant_ident);
                 
                 // Generate field patterns and bindings
                 let field_patterns: Vec<_> = fields.iter().map(|f| {
