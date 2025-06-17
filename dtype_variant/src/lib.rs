@@ -5,10 +5,22 @@ pub use dtype_variant_derive::{DType, build_dtype_tokens};
 pub trait EnumVariantDowncast<VariantToken> {
     type Target;
 
-    /// Returns a reference to the target field if the enum is the target variant
-    fn downcast_ref(&self) -> Option<&Self::Target>;
-    fn downcast_mut(&mut self) -> Option<&mut Self::Target>;
+    /// Consumes the enum and returns the target value if it matches the variant
     fn downcast(self) -> Option<Self::Target>;
+}
+
+pub trait EnumVariantDowncastRef<VariantToken> {
+    type Target<'target> where Self: 'target;
+
+    /// Returns a reference wrapper for the target field if the enum is the target variant
+    fn downcast_ref(&self) -> Option<Self::Target<'_>>;
+}
+
+pub trait EnumVariantDowncastMut<VariantToken> {
+    type Target<'target> where Self: 'target;
+
+    /// Returns a mutable reference wrapper for the target field if the enum is the target variant
+    fn downcast_mut(&mut self) -> Option<Self::Target<'_>>;
 }
 
 // Define the EnumVariantConstraint trait with Constraint parameter
@@ -31,7 +43,7 @@ mod tests {
     #[derive(Clone, Debug, Default, DType)]
     #[dtype(
         matcher = match_my_enum_variant,
-        tokens_path = self,
+        shared_variant_zst_path = self,
         constraint = Constraint
     )]
     pub enum MyEnumVariant {
@@ -44,7 +56,7 @@ mod tests {
     #[derive(Clone, Debug, DType, PartialEq, Eq)]
     #[dtype(
         matcher = match_my_enum,
-        tokens_path = self,
+        shared_variant_zst_path = self,
         constraint = Constraint,
         container = "Vec"
     )]
@@ -96,7 +108,7 @@ mod tests {
     build_dtype_tokens!([I32, F32]);
 
     #[derive(Clone, Debug, DType)]
-    #[dtype(matcher = match_dyn_enum, tokens_path = self)]
+    #[dtype(matcher = match_dyn_enum, shared_variant_zst_path = self)]
     enum DynChunk {
         I32(i32),
         F32(f32),
@@ -146,7 +158,7 @@ mod tests {
     build_dtype_tokens!([Int, Float, Str]); // Add tokens for MyData
 
     #[derive(DType, Debug, Clone, PartialEq)]
-    #[dtype(tokens_path = self)] // skip_from_impls is false by default
+    #[dtype(shared_variant_zst_path = self)] // skip_from_impls is false by default
     #[dtype_grouped_matcher(name = match_by_category, grouping = [
         Numeric(Int | Float),
         Text(Str)
@@ -201,4 +213,277 @@ mod tests {
         assert_eq!(size_float, "Large");
         assert_eq!(size_str, "Large");
     }
+
+    build_dtype_tokens!([Person, Location, Score]); // Add tokens for struct variant test
+
+    #[derive(DType, Debug, Clone, PartialEq)]
+    #[dtype(matcher = match_struct_variant_data, shared_variant_zst_path = self)]
+    #[allow(dead_code)]
+    enum StructVariantData {
+        Person { name: String, age: u32 },
+        Location { lat: f64, lng: f64 },
+        Score(i32),
+    }
+
+    #[test]
+    fn test_struct_variants() {
+        // Test struct variant creation
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        
+        let location_data = StructVariantData::Location {
+            lat: 37.7749,
+            lng: -122.4194,
+        };
+        
+        let score_data = StructVariantData::Score(95);
+        
+        // Test owned downcasting (struct variants only support owned downcasting for now)
+        if let Some(person_fields) = person_data.clone().downcast::<PersonVariant>() {
+            assert_eq!(person_fields.name, "Alice");
+            assert_eq!(person_fields.age, 30);
+        } else {
+            panic!("Failed to downcast person variant");
+        }
+        
+        if let Some(location_fields) = location_data.clone().downcast::<LocationVariant>() {
+            assert_eq!(location_fields.lat, 37.7749);
+            assert_eq!(location_fields.lng, -122.4194);
+        } else {
+            panic!("Failed to downcast location variant");
+        }
+        
+        if let Some(score) = score_data.downcast_ref::<ScoreVariant>() {
+            assert_eq!(*score, 95);
+        } else {
+            panic!("Failed to downcast score variant");
+        }
+        
+        // Test From implementations with struct types
+        let person_struct = PersonFields { name: "Bob".to_string(), age: 25 };
+        let data_from_struct = StructVariantData::from(person_struct);
+        
+        if let StructVariantData::Person { name, age } = data_from_struct {
+            assert_eq!(name, "Bob");
+            assert_eq!(age, 25);
+        } else {
+            panic!("Failed to create enum from struct");
+        }
+    }
+
+    #[test]
+    fn test_struct_variant_matcher_basic() {
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        // Test basic matcher functionality for struct variants - use simplest form
+        let person_result = match_struct_variant_data!(person_data, StructVariantData<Token> => {
+            "Person variant matched"
+        });
+        assert_eq!(person_result, "Person variant matched");
+    }
+
+    #[test]
+    fn test_struct_variant_matcher_all_variants() {
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        
+        let location_data = StructVariantData::Location {
+            lat: 37.7749,
+            lng: -122.4194,
+        };
+        
+        let score_data = StructVariantData::Score(95);
+
+        // Test basic matcher functionality for all variants
+        let person_result = match_struct_variant_data!(person_data, StructVariantData<Token> => {
+            "Person variant"
+        });
+        assert_eq!(person_result, "Person variant");
+
+        let location_result = match_struct_variant_data!(location_data, StructVariantData<Token> => {
+            "Location variant"
+        });
+        assert_eq!(location_result, "Location variant");
+
+        let score_result = match_struct_variant_data!(score_data, StructVariantData<Token> => {
+            "Score variant"
+        });
+        assert_eq!(score_result, "Score variant");
+    }
+
+    #[test]
+    fn test_struct_variant_matcher_with_references() {
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        // Test matcher with references
+        let person_result = match_struct_variant_data!(&person_data, StructVariantData<Token> => {
+            "Reference to person variant"
+        });
+        assert_eq!(person_result, "Reference to person variant");
+    }
+
+    #[test]
+    fn test_struct_variant_reference_downcasting() {
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        
+        let location_data = StructVariantData::Location {
+            lat: 37.7749,
+            lng: -122.4194,
+        };
+
+        // Test reference downcasting for struct variants - should now work!
+        let person_ref = person_data.downcast_ref::<PersonVariant>();
+        if let Some(person_fields_ref) = person_ref {
+            assert_eq!(person_fields_ref.name, "Alice");
+            assert_eq!(*person_fields_ref.age, 30);
+        } else {
+            panic!("Reference downcasting should work for struct variants now");
+        }
+
+        // Test reference downcasting for location
+        let location_ref = location_data.downcast_ref::<LocationVariant>();
+        if let Some(location_fields_ref) = location_ref {
+            assert_eq!(*location_fields_ref.lat, 37.7749);
+            assert_eq!(*location_fields_ref.lng, -122.4194);
+        } else {
+            panic!("Reference downcasting should work for struct variants now");
+        }
+
+        // Test mutable reference downcasting
+        let mut person_data_mut = StructVariantData::Person {
+            name: "Bob".to_string(),
+            age: 25,
+        };
+        
+        let person_mut_ref = person_data_mut.downcast_mut::<PersonVariant>();
+        if let Some(person_fields_mut) = person_mut_ref {
+            // We can modify the fields through the mutable references
+            *person_fields_mut.age = 26;
+            // Note: The original enum is not modified because we're working with a wrapper struct
+            // This is expected behavior for this design
+        } else {
+            panic!("Mutable reference downcasting should work for struct variants now");
+        }
+    }
+
+    #[test]
+    fn test_struct_variant_reference_downcast_fail() {
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        // Test that downcasting to wrong type returns None
+        let location_ref = person_data.downcast_ref::<LocationVariant>();
+        assert!(location_ref.is_none());
+
+        let mut person_data_clone = person_data.clone();
+        let location_mut_ref = person_data_clone.downcast_mut::<LocationVariant>();
+        assert!(location_mut_ref.is_none());
+    }
+
+    #[test]
+    fn test_new_trait_structure() {
+        // Test that the new three-trait structure works correctly
+        let score_data = StructVariantData::Score(95);
+        
+        // Test each trait separately
+        // Owned downcasting should work for tuple variants
+        let score_owned = score_data.clone().downcast::<ScoreVariant>();
+        assert_eq!(score_owned, Some(95));
+        
+        // Reference downcasting should work for tuple variants
+        let score_ref = score_data.downcast_ref::<ScoreVariant>();
+        assert_eq!(score_ref, Some(&95));
+        
+        // Mutable reference downcasting should work for tuple variants
+        let mut score_data_mut = StructVariantData::Score(42);
+        let score_mut_ref = score_data_mut.downcast_mut::<ScoreVariant>();
+        assert_eq!(score_mut_ref, Some(&mut 42));
+    }
+
+    #[test]
+    fn test_reference_struct_types() {
+        // Test that the generated reference types work as expected
+        let person_data = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        // Test that downcast_ref returns PersonRef<'_>
+        let person_ref: Option<PersonRef<'_>> = person_data.downcast_ref::<PersonVariant>();
+        assert!(person_ref.is_some());
+        let person_ref = person_ref.unwrap();
+        assert_eq!(person_ref.name, "Alice");
+        assert_eq!(*person_ref.age, 30);
+
+        // Test that downcast_mut returns PersonMut<'_>
+        let mut person_data_mut = StructVariantData::Person {
+            name: "Bob".to_string(),
+            age: 25,
+        };
+        let person_mut: Option<PersonMut<'_>> = person_data_mut.downcast_mut::<PersonVariant>();
+        assert!(person_mut.is_some());
+        let person_mut = person_mut.unwrap();
+        assert_eq!(person_mut.name, "Bob");
+        *person_mut.age = 26; // Demonstrate mutable access
+        assert_eq!(*person_mut.age, 26);
+    }
+
+    #[test]
+    fn test_complete_reference_downcasting_functionality() {
+        // Comprehensive test demonstrating the complete functionality
+        
+        // Test struct variants with reference downcasting
+        let person = StructVariantData::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        
+        // Test owned downcasting (returns PersonFields)
+        let person_owned = person.clone().downcast::<PersonVariant>().unwrap();
+        assert_eq!(person_owned.name, "Alice");
+        assert_eq!(person_owned.age, 30);
+        
+        // Test reference downcasting (returns PersonRef<'_>)
+        let person_ref = person.downcast_ref::<PersonVariant>().unwrap();
+        assert_eq!(person_ref.name, "Alice");
+        assert_eq!(*person_ref.age, 30);
+        
+        // Test mutable reference downcasting (returns PersonMut<'_>)
+        let mut person_mut = StructVariantData::Person {
+            name: "Bob".to_string(),
+            age: 25,
+        };
+        let person_mut_ref = person_mut.downcast_mut::<PersonVariant>().unwrap();
+        assert_eq!(person_mut_ref.name, "Bob");
+        *person_mut_ref.age = 26;
+        assert_eq!(*person_mut_ref.age, 26);
+        
+        // Test tuple variants still work
+        let score = StructVariantData::Score(95);
+        assert_eq!(score.clone().downcast::<ScoreVariant>(), Some(95));
+        assert_eq!(score.downcast_ref::<ScoreVariant>(), Some(&95));
+        
+        let mut score_mut = StructVariantData::Score(42);
+        assert_eq!(score_mut.downcast_mut::<ScoreVariant>(), Some(&mut 42));
+        
+        // Test wrong type downcasting returns None
+        assert!(person.downcast_ref::<LocationVariant>().is_none());
+        assert!(person.downcast_ref::<ScoreVariant>().is_none());
+    }
+
 }

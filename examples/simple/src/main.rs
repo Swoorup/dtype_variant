@@ -4,7 +4,7 @@ use dtype_variant_example_shared::variants::AttackVariant;
 #[derive(Clone, Debug, DType)]
 #[dtype(
     matcher = player_input_enum,
-    tokens_path = dtype_variant_example_shared::variants
+    shared_variant_zst_path = dtype_variant_example_shared::variants
 )]
 pub enum PlayerInput {
     Move(String),
@@ -14,7 +14,7 @@ pub enum PlayerInput {
 #[derive(Clone, Debug, DType)]
 #[dtype(
     matcher = "ai_behavior_enum",
-    tokens_path = dtype_variant_example_shared::variants
+    shared_variant_zst_path = dtype_variant_example_shared::variants
 )]
 pub enum AIBehavior {
     Attack(u32),
@@ -42,11 +42,13 @@ fn combine_shared_actions<Variant, Target>(
     action2: &AIBehavior,
 ) -> Option<Target>
 where
-    PlayerInput: EnumVariantDowncast<Variant, Target = Target>,
-    AIBehavior: EnumVariantDowncast<Variant, Target = Target>,
+    PlayerInput: EnumVariantDowncastRef<Variant>,
+    AIBehavior: EnumVariantDowncastRef<Variant>,
+    for<'a> <PlayerInput as EnumVariantDowncastRef<Variant>>::Target<'a>: std::ops::Deref<Target = Target>,
+    for<'a> <AIBehavior as EnumVariantDowncastRef<Variant>>::Target<'a>: std::ops::Deref<Target = Target>,
     Target: std::ops::Add<Output = Target> + Clone + 'static,
 {
     let inner1 = action1.downcast_ref::<Variant>()?;
     let inner2 = action2.downcast_ref::<Variant>()?;
-    Some(inner1.clone() + inner2.clone())
+    Some((*inner1).clone() + (*inner2).clone())
 }

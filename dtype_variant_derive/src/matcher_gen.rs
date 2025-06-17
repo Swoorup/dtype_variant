@@ -114,23 +114,31 @@ pub fn generate_match_arm_content(
         })
         .unwrap_or_default();
 
-    // --- Inner Binding Logic (for unit variants when inner is requested) ---
-    // Note: The actual binding `Variant(inner_ident)` happens in the *pattern*.
-    // This only handles the case where the pattern expects `inner_ident`, but the variant is Unit.
-    let inner_unit_binding = match (include_inner, variant_info.is_unit) {
-        (true, true) => (!all_unit_variants)
+    // --- Inner Binding Logic ---
+    // Handle special cases where inner is requested but pattern doesn't naturally provide it
+    let inner_binding = match (include_inner, variant_info.is_unit, variant_info.is_struct) {
+        (true, true, _) => (!all_unit_variants)
             .then_some(quote! {
                #[allow(unused_variables, clippy::let_unit_value)]
                let #inner_ident = (); // Provide a unit binding for consistency if inner requested
             })
             .unwrap_or_default(),
+        (true, false, true) => {
+            // For struct variants, we need to recreate the struct from the matched fields
+            // This is complex because we need to know the field names
+            // For now, we'll handle this limitation by not supporting inner for struct variants
+            quote! {
+                // For struct variants, inner access requires special handling
+                // The user will need to access fields directly through downcasting
+            }
+        },
         _ => quote! {},
     };
 
     // --- Combine into the final arm body ---
     quote! {
         { // Wrap in braces
-            #inner_unit_binding
+            #inner_binding
             #type_declarations
             #dest_type_decl
             #dest_constraint_decl
@@ -165,14 +173,20 @@ pub fn generate_match_arms_for_regular_matcher(
             let variant_ident = &v.variant_ident;
 
             // 1. Generate the pattern
-            let pattern = match (include_inner, v.is_unit) {
-                (_, true) => quote! { #enum_name::#variant_ident },
-                (false, false) => {
+            let pattern = match (include_inner, v.is_unit, v.is_struct) {
+                (_, true, _) => quote! { #enum_name::#variant_ident },
+                (false, false, false) => {
                     quote! { #enum_name::#variant_ident(_) }
                 }
-                (true, false) => {
+                (true, false, false) => {
                     quote! { #enum_name::#variant_ident(#inner_ident) }
-                } // Use captured inner_ident
+                } // Use captured inner_ident for tuple variants
+                (false, false, true) => {
+                    quote! { #enum_name::#variant_ident { .. } }
+                } // Ignore struct fields when inner not needed
+                (true, false, true) => {
+                    quote! { #enum_name::#variant_ident { .. } }
+                } // For struct variants, we'll need special handling for inner
             };
 
             // 2. Generate the arm body content using the new helper

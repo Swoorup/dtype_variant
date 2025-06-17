@@ -44,7 +44,7 @@ pub fn build_dtype_tokens(input: TokenStream) -> TokenStream {
         let variant_name = format_ident!("{}Variant", variant);
 
         quote! {
-            #[derive(Default)]
+            #[derive(Default, Debug)]
             pub struct #variant_name;
         }
     });
