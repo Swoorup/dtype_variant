@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.12...dtype_variant-v0.0.13) - 2025-06-17
+
+### Other
+
+- `cargo fmt`
+- Prefix generated struct with Enum names
+- Added support for struct variants, using generate structs
+
 ## [0.0.12](https://github.com/Swoorup/dtype_variant/compare/dtype_variant-v0.0.11...dtype_variant-v0.0.12) - 2025-04-28
 
 ### Other
