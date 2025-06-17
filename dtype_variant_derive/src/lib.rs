@@ -12,7 +12,11 @@ pub(crate) fn dtype_variant_path() -> syn::Path {
     match found_crate {
         proc_macro_crate::FoundCrate::Itself => format_ident!("crate").into(),
         proc_macro_crate::FoundCrate::Name(name) => {
-            syn::parse(name.parse().unwrap()).unwrap()
+            // Parse crate name safely - fall back to simple identifier if parsing fails
+            syn::parse_str(name.as_str()).unwrap_or_else(|_| {
+                // Create a simple path from the crate name
+                syn::Path::from(format_ident!("{}", name.as_str().replace('-', "_")))
+            })
         }
     }
 }

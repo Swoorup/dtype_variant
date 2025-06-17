@@ -16,6 +16,37 @@ use crate::dtype_variant_path;
 use crate::grouped_matcher::{DTypeGroupedMatcherArgs, ParsedGroupedMatcher};
 use crate::matcher_gen::{MacroRuleArm, generate_macro_rule_arm};
 
+//============================================================================
+// Error Handling Utilities
+//============================================================================
+
+/// Creates a standardized error message for proc macro errors.
+/// Uses consistent formatting with backticks for code identifiers.
+fn create_error_message(context: &str, details: &str) -> String {
+    format!("{}: {}", context, details)
+}
+
+/// Combines multiple syn::Error instances into a single error.
+/// Provides a consistent way to accumulate and report multiple validation errors.
+fn combine_errors(base_error: Option<Error>, new_error: Error) -> Error {
+    match base_error {
+        Some(mut existing) => {
+            existing.combine(new_error);
+            existing
+        }
+        None => new_error,
+    }
+}
+
+/// Converts a darling::Error to syn::Error with consistent formatting.
+fn darling_error_to_syn(darling_error: darling::Error) -> Error {
+    Error::new(darling_error.span(), darling_error.to_string())
+}
+
+//============================================================================
+// Configuration and Data Structures
+//============================================================================
+
 /// Parses the top-level `#[dtype(...)]` attribute applied to the enum.
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(dtype), supports(enum_any))] // Specify attribute name and support only enums
@@ -55,6 +86,11 @@ struct DTypeMacroArgs {
     skip_from_impls: bool,
 }
 
+/// Comprehensive information about a parsed enum variant.
+/// 
+/// This structure contains all the metadata and generated code needed for a single
+/// enum variant, including struct definitions for struct variants and type information
+/// for all variant types.
 #[derive(Debug, Clone)]
 pub struct ParsedVariantInfo {
     /// Identifier of the enum variant (e.g., `MyVariant`).
@@ -87,6 +123,31 @@ pub struct ParsedVariantInfo {
     pub struct_fields: Option<Vec<Field>>,
 }
 
+//============================================================================
+// Main Entry Point
+//============================================================================
+
+/// Main implementation of the DType derive macro.
+/// 
+/// This function processes the input enum and generates all necessary code for:
+/// - Variant token types (either locally or using shared tokens)
+/// - Struct definitions for struct variants
+/// - Downcast trait implementations (owned, reference, and mutable reference)
+/// - From trait implementations
+/// - Pattern matching macros (regular and grouped)
+/// 
+/// # Arguments
+/// * `input` - TokenStream from the derive macro containing the enum definition
+/// 
+/// # Returns
+/// * TokenStream containing all generated code
+/// 
+/// # Errors
+/// Returns compilation errors for:
+/// - Non-enum types
+/// - Invalid attribute configurations
+/// - Malformed grouped matcher definitions
+/// - Missing shared variant tokens
 pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     let dtype_variant_path = dtype_variant_path();
 
@@ -105,7 +166,10 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         _ => {
             return Error::new_spanned(
                 &main_args.ident,
-                "DTypeEnum derive macro can only be used on enums.",
+                create_error_message(
+                    "DType derive macro validation", 
+                    "can only be used on `enum` types"
+                ),
             )
             .to_compile_error()
             .into();
@@ -134,16 +198,15 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Parse enum variants and extract necessary info.
-    let variant_parse_result = parse_variants(enum_data, &container_ident_opt, &main_args.ident);
-    let parsed_variants = match variant_parse_result {
+    // Parse enum variants and extract necessary information
+    let parsed_variants = match parse_variants(enum_data, &container_ident_opt, &main_args.ident) {
         Ok(variants) => variants,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    // --- Parse #[dtype_grouped_matcher] attributes using darling ---
+    // Parse #[dtype_grouped_matcher] attributes using darling
     let mut parsed_grouped_matchers = Vec::new();
-    let mut all_attr_parse_errors: Option<Error> = None;
+    let mut attr_parse_errors: Option<Error> = None;
 
     // Filter attributes first
     let grouped_matcher_attrs: Vec<&Attribute> = derive_input
@@ -165,36 +228,26 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
                 });
             }
             Err(e) => {
-                // Collect darling errors
-                let syn_error = Error::new(e.span(), e.to_string()); // Convert darling::Error to syn::Error
-                if let Some(ref mut errors) = all_attr_parse_errors {
-                    errors.combine(syn_error);
-                } else {
-                    all_attr_parse_errors = Some(syn_error);
-                }
+                // Use standardized error handling
+                let syn_error = darling_error_to_syn(e);
+                attr_parse_errors = Some(combine_errors(attr_parse_errors, syn_error));
             }
         }
     }
 
     // If any attribute parsing errors occurred, return them
-    if let Some(errors) = all_attr_parse_errors {
+    if let Some(errors) = attr_parse_errors {
         return errors.to_compile_error().into();
     }
 
-    // --- Validate parsed grouped matchers ---
-    let mut all_validation_errors: Option<Error> = None;
+    // Validate parsed grouped matchers
+    let mut validation_errors: Option<Error> = None;
     for parsed_matcher in &parsed_grouped_matchers {
-        if let Err(e) =
-            validate_grouped_matcher(parsed_matcher, &parsed_variants)
-        {
-            if let Some(ref mut errors) = all_validation_errors {
-                errors.combine(e);
-            } else {
-                all_validation_errors = Some(e);
-            }
+        if let Err(e) = validate_grouped_matcher(parsed_matcher, &parsed_variants) {
+            validation_errors = Some(combine_errors(validation_errors, e));
         }
     }
-    if let Some(errors) = all_validation_errors {
+    if let Some(errors) = validation_errors {
         return errors.to_compile_error().into();
     }
 
@@ -308,9 +361,9 @@ pub fn dtype_derive_impl(input: TokenStream) -> TokenStream {
     final_code.into()
 }
 
-//----------------------------------------------------------------------------
-// 4. Helper Functions for Parsing and Validation
-//----------------------------------------------------------------------------
+//============================================================================
+// Parsing and Validation Functions
+//============================================================================
 
 /// Parses string paths/identifiers from the darling config struct into syn types.
 #[derive(Default)]
@@ -487,7 +540,10 @@ fn parse_variants(
             Fields::Unnamed(_) => {
                 return Err(Error::new_spanned(
                     &variant.fields,
-                    "DTypeEnum only supports tuple variants with exactly one field.",
+                    create_error_message(
+                        "Tuple variant validation",
+                        "only supports tuple variants with exactly one field"
+                    ),
                 ));
             }
         }
@@ -629,9 +685,45 @@ fn validate_grouped_matcher(
     Ok(())
 }
 
-//----------------------------------------------------------------------------
-// 5. Helper Functions for Code Generation (`quote!`)
-//----------------------------------------------------------------------------
+//============================================================================
+// Helper Functions for Code Generation
+//============================================================================
+
+/// Generates macro-compatible paths for both tokens_path and dtype_variant_path.
+/// Handles the case where paths start with "crate" and need to be converted to "$crate" for macro use.
+fn generate_macro_compatible_paths(
+    tokens_path: &Path,
+    dtype_variant_path: &Path,
+) -> (TokenStream2, TokenStream2) {
+    let use_token_path_crate_macro = tokens_path
+        .segments
+        .first()
+        .map(|seg| seg.ident == "crate")
+        .unwrap_or(false);
+    let use_dtype_variant_path_crate_macro = dtype_variant_path
+        .segments
+        .first()
+        .map(|seg| seg.ident == "crate")
+        .unwrap_or(false);
+
+    let tokens_path_macro = if use_token_path_crate_macro {
+        let mut rest_path = TokenStream2::new();
+        for segment in tokens_path.segments.iter().skip(1) {
+            rest_path.extend(quote!( :: #segment));
+        }
+        quote! { $crate #rest_path }
+    } else {
+        quote! { #tokens_path }
+    };
+
+    let dtype_variant_path_macro = if use_dtype_variant_path_crate_macro {
+        quote! { $crate }
+    } else {
+        quote! { #dtype_variant_path }
+    };
+
+    (tokens_path_macro, dtype_variant_path_macro)
+}
 
 /// Generates local variant ZST token definitions when shared_variant_zst_path is not specified.
 fn generate_local_token_definitions(
@@ -654,20 +746,18 @@ fn generate_local_token_definitions(
 fn generate_struct_definitions(
     parsed_variants: &[ParsedVariantInfo],
 ) -> TokenStream2 {
+    // Avoid intermediate Vec collections - use iterators directly
     let struct_definitions = parsed_variants
         .iter()
-        .filter_map(|v| v.struct_definition.as_ref())
-        .collect::<Vec<_>>();
+        .filter_map(|v| v.struct_definition.as_ref());
 
     let struct_ref_definitions = parsed_variants
         .iter()
-        .filter_map(|v| v.struct_ref_definition.as_ref())
-        .collect::<Vec<_>>();
+        .filter_map(|v| v.struct_ref_definition.as_ref());
 
     let struct_mut_definitions = parsed_variants
         .iter()
-        .filter_map(|v| v.struct_mut_definition.as_ref())
-        .collect::<Vec<_>>();
+        .filter_map(|v| v.struct_mut_definition.as_ref());
 
     quote! {
         #(#struct_definitions)*
@@ -695,14 +785,18 @@ fn generate_struct_from_conversions(
             // Generate field conversions for Ref -> Fields
             let ref_field_conversions: Vec<_> = fields.iter().map(|field| {
                 let field_name = field.ident.as_ref().unwrap();
-                quote! { #field_name: (*src.#field_name).clone() }
+                // Clone from reference - compiler optimizes Copy types automatically
+                quote! { #field_name: src.#field_name.clone() }
             }).collect();
             
             // Generate field conversions for Mut -> Fields  
             let mut_field_conversions: Vec<_> = fields.iter().map(|field| {
                 let field_name = field.ident.as_ref().unwrap();
-                quote! { #field_name: (*src.#field_name).clone() }
+                // Clone from reference - compiler optimizes Copy types automatically
+                quote! { #field_name: src.#field_name.clone() }
             }).collect();
+            
+            // The consuming conversions still need to dereference since Ref/Mut structs contain references
 
             quote! {
                 // From conversion for Ref types
@@ -988,10 +1082,10 @@ fn generate_enum_variant_constraint(
     enum_name: &Ident,
     generics: &Generics,
     parsed_variants: &[ParsedVariantInfo],
-    constaint_opt: &Option<Expr>,
+    constraint_opt: &Option<Expr>,
     tokens_path: &Path, // Add tokens_path parameter
 ) -> TokenStream2 {
-    let constraint = match constaint_opt {
+    let constraint = match constraint_opt {
         Some(path) => path,
         None => return quote! {}, // No constraint specified
     };
@@ -1206,39 +1300,13 @@ fn generate_matcher_method(
     let all_unit_variants = parsed_variants.iter().all(|v| v.is_unit);
     let internal_matcher_name = format_ident!("_{}", matcher_name);
 
-    // --- Path Generation Closures --- (Captures tokens_path, dtype_variant_path)
-    let use_token_path_crate_macro = tokens_path
-        .segments
-        .first()
-        .map(|seg| seg.ident == "crate")
-        .unwrap_or(false);
-    let use_dtype_variant_path_crate_macro = dtype_variant_path
-        .segments
-        .first()
-        .map(|seg| seg.ident == "crate")
-        .unwrap_or(false);
-
-    let tokens_path = if use_token_path_crate_macro {
-        let mut rest_path = TokenStream2::new();
-        for segment in tokens_path.segments.iter().skip(1) {
-            rest_path.extend(quote!( :: #segment));
-        }
-        quote! { $crate #rest_path }
-    } else {
-        quote! { #tokens_path }
-    };
-
-    let dtype_variant_path = if use_dtype_variant_path_crate_macro {
-        quote! { $crate }
-    } else {
-        quote! { #dtype_variant_path }
-    };
-    // --- End Path Generation Closures ---
+    // Generate macro-compatible paths
+    let (tokens_path, dtype_variant_path) = generate_macro_compatible_paths(tokens_path, dtype_variant_path);
 
     let generate_macro_rule_arm = generate_macro_rule_arm(
         enum_name,
         parsed_variants,
-        tokens_path,
+        tokens_path.clone(),
         &dtype_variant_path,
         None,
     );
@@ -1347,33 +1415,8 @@ fn generate_grouped_matcher_macro(
         variant_info_map.insert(v.variant_ident.to_string(), v);
     }
 
-    // --- Path Generation Closures --- (Duplicated - consider extracting to a shared place if needed)
-    let use_token_path_crate_macro = tokens_path
-        .segments
-        .first()
-        .map(|seg| seg.ident == "crate")
-        .unwrap_or(false);
-    let use_dtype_variant_path_crate_macro = dtype_variant_path
-        .segments
-        .first()
-        .map(|seg| seg.ident == "crate")
-        .unwrap_or(false);
-
-    let tokens_path = if use_token_path_crate_macro {
-        let mut rest_path = TokenStream2::new();
-        for segment in tokens_path.segments.iter().skip(1) {
-            rest_path.extend(quote!( :: #segment));
-        }
-        quote! { $crate #rest_path }
-    } else {
-        quote! { #tokens_path }
-    };
-
-    let dtype_variant_path = if use_dtype_variant_path_crate_macro {
-        quote! { $crate }
-    } else {
-        quote! { #dtype_variant_path }
-    };
+    // Generate macro-compatible paths
+    let (tokens_path, dtype_variant_path) = generate_macro_compatible_paths(tokens_path, dtype_variant_path);
 
     // --- Define the Macro Rule ---
     let create_group_macro_arm = |include_src_ty: bool| {

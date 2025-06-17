@@ -51,16 +51,16 @@ impl EventProcessor {
 
     fn process_event(&mut self, event: &GameEvent) {
       
-        // Demonstrate grouped matching by priority
-        let priority = match_by_priority!(event.clone(), {
-            Critical: GameEvent<T, Variant>(inner) => { "🚨 CRITICAL" },
+        // Demonstrate grouped matching by priority - use reference to avoid cloning
+        let priority = match_by_priority!(event, {
+            Critical: GameEvent<T, Variant>(_inner) => { "🚨 CRITICAL" },
             Normal: GameEvent<T, Variant>(_inner) => { "📝 Normal" },
             Info: GameEvent<T> => { "ℹ️  Info" },
         });
         
-        // Demonstrate grouped matching by category
-        let category = match_by_category!(event.clone(), {
-            Player: GameEvent<T, Variant>(inner) => { "Player action" },
+        // Demonstrate grouped matching by category - use reference to avoid cloning
+        let category = match_by_category!(event, {
+            Player: GameEvent<T, Variant>(_inner) => { "Player action" },
             System: GameEvent<T, Variant>(_inner) => { "System event" },
             Communication: GameEvent<T, Variant>(_inner) => { "Communication" },
         });
@@ -225,14 +225,14 @@ fn main() {
     for event in &test_events {
         let event_type = processor.get_event_type_name(event);
         
-        let priority = match_by_priority!(event.clone(), {
-            Critical: GameEvent<T, Variant>(inner) => { "Critical" },
+        let priority = match_by_priority!(event, {
+            Critical: GameEvent<T, Variant>(_inner) => { "Critical" },
             Normal: GameEvent<T, Variant>(_inner) => { "Normal" },
             Info: GameEvent<Variant> => { "Info" },
         });
         
-        let category = match_by_category!(event.clone(), {
-            Player: GameEvent<T, Variant>(inner) => { "Player" },
+        let category = match_by_category!(event, {
+            Player: GameEvent<T, Variant>(_inner) => { "Player" },
             System: GameEvent<T, Variant>(_inner) => { "System" },
             Communication: GameEvent<T, Variant>(_inner) => { "Communication" },
         });
