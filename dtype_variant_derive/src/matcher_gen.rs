@@ -116,24 +116,25 @@ pub fn generate_match_arm_content(
 
     // --- Inner Binding Logic ---
     // Handle special cases where inner is requested but pattern doesn't naturally provide it
-    let inner_binding = match (include_inner, variant_info.is_unit, variant_info.is_struct) {
-        (true, true, _) => (!all_unit_variants)
-            .then_some(quote! {
-               #[allow(unused_variables, clippy::let_unit_value)]
-               let #inner_ident = (); // Provide a unit binding for consistency if inner requested
-            })
-            .unwrap_or_default(),
-        (true, false, true) => {
-            // For struct variants, we need to recreate the struct from the matched fields
-            // This is complex because we need to know the field names
-            // For now, we'll handle this limitation by not supporting inner for struct variants
-            quote! {
-                // For struct variants, inner access requires special handling
-                // The user will need to access fields directly through downcasting
+    let inner_binding =
+        match (include_inner, variant_info.is_unit, variant_info.is_struct) {
+            (true, true, _) => (!all_unit_variants)
+                .then_some(quote! {
+                   #[allow(unused_variables, clippy::let_unit_value)]
+                   let #inner_ident = (); // Provide a unit binding for consistency if inner requested
+                })
+                .unwrap_or_default(),
+            (true, false, true) => {
+                // For struct variants, we need to recreate the struct from the matched fields
+                // This is complex because we need to know the field names
+                // For now, we'll handle this limitation by not supporting inner for struct variants
+                quote! {
+                    // For struct variants, inner access requires special handling
+                    // The user will need to access fields directly through downcasting
+                }
             }
-        },
-        _ => quote! {},
-    };
+            _ => quote! {},
+        };
 
     // --- Combine into the final arm body ---
     quote! {

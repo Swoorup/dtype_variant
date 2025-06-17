@@ -44,8 +44,10 @@ fn combine_shared_actions<Variant, Target>(
 where
     PlayerInput: EnumVariantDowncastRef<Variant>,
     AIBehavior: EnumVariantDowncastRef<Variant>,
-    for<'a> <PlayerInput as EnumVariantDowncastRef<Variant>>::Target<'a>: std::ops::Deref<Target = Target>,
-    for<'a> <AIBehavior as EnumVariantDowncastRef<Variant>>::Target<'a>: std::ops::Deref<Target = Target>,
+    for<'a> <PlayerInput as EnumVariantDowncastRef<Variant>>::Target<'a>:
+        std::ops::Deref<Target = Target>,
+    for<'a> <AIBehavior as EnumVariantDowncastRef<Variant>>::Target<'a>:
+        std::ops::Deref<Target = Target>,
     Target: std::ops::Add<Output = Target> + Clone + 'static,
 {
     let inner1 = action1.downcast_ref::<Variant>()?;

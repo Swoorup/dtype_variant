@@ -74,11 +74,10 @@ impl<'a> DynChunkBorrowed<'a> {
 
     fn to_dynchunk(&self) -> DynChunk {
         match_dyn_chunk_borrowed!(self, DynChunkBorrowed< T<'a>, Variant>(inner), DynChunk<Dest> => {
-            DynChunk::from((*inner).clone())
+            DynChunk::from((*inner).clone()) // Dereference then clone to convert from &Vec<T> to Vec<T>
         })
     }
 }
-
 
 fn main() {
     // Create and add DynChunks

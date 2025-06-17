@@ -1,0 +1,8 @@
+[package]
+name = "dtype_variant_game_events"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+dtype_variant = { path = "../../dtype_variant" }
